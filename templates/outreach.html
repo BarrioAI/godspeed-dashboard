@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block title %}Outreach Log — Godspeed{% endblock %}
+
+{% block content %}
+<div class="container">
+
+  <div class="page-title">📬 Outreach Log</div>
+  <div class="page-sub">Full history of all pitches, messages, and responses</div>
+
+  {% if error %}
+  <div class="alert alert-warning">⚠️ {{ error }}</div>
+  {% endif %}
+
+  <!-- FILTERS -->
+  <form method="get" class="filter-bar">
+    <div class="filter-group">
+      <span class="filter-label">Store</span>
+      <select name="store" onchange="this.form.submit()">
+        <option value="">All Stores</option>
+        {% for name in store_names %}
+        <option value="{{ name | lower }}" {% if store_filter == name | lower %}selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">Channel</span>
+      <select name="channel" onchange="this.form.submit()">
+        <option value="">All Channels</option>
+        {% for ch in channels %}
+        <option value="{{ ch | lower }}" {% if channel_filter == ch | lower %}selected{% endif %}>{{ ch }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">Date</span>
+      <input type="date" name="date" value="{{ date_filter }}" onchange="this.form.submit()">
+    </div>
+    <a href="/outreach" class="btn btn-outline btn-sm">Clear</a>
+  </form>
+
+  <!-- STATS ROW -->
+  <div class="stats-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 20px;">
+    <div class="stat-card" style="padding: 16px;">
+      <div class="stat-value" style="font-size: 28px;">{{ log|length }}</div>
+      <div class="stat-label">Total Messages</div>
+    </div>
+    <div class="stat-card" style="padding: 16px;">
+      <div class="stat-value" style="font-size: 28px; color: #3498DB;">{{ log | selectattr('Channel', 'equalto', 'Instagram DM') | list | length }}</div>
+      <div class="stat-label">Instagram DMs</div>
+    </div>
+    <div class="stat-card" style="padding: 16px;">
+      <div class="stat-value" style="font-size: 28px; color: #9B59B6;">{{ log | selectattr('Channel', 'equalto', 'Email') | list | length }}</div>
+      <div class="stat-label">Emails</div>
+    </div>
+    <div class="stat-card" style="padding: 16px;">
+      <div class="stat-value" style="font-size: 28px; color: var(--success);">{{ log | selectattr('Response', 'ne', '') | list | length }}</div>
+      <div class="stat-label">Got Replies</div>
+    </div>
+  </div>
+
+  {% if log %}
+  <div class="card" style="padding: 0;">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>Store</th>
+            <th>Channel</th>
+            <th>Message Preview</th>
+            <th>Sent At</th>
+            <th>Response</th>
+            <th>Status</th>
+            <th>Agent</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in log %}
+          <tr>
+            <td><strong>{{ entry['Store Name'] or '—' }}</strong></td>
+            <td>
+              {% set ch = entry.Channel or '' %}
+              {% if 'instagram' in ch.lower() or 'dm' in ch.lower() %}
+              <span style="color: #E1306C;">📷 {{ ch }}</span>
+              {% elif 'email' in ch.lower() %}
+              <span style="color: #9B59B6;">📧 {{ ch }}</span>
+              {% elif 'sms' in ch.lower() %}
+              <span style="color: #27AE60;">💬 {{ ch }}</span>
+              {% else %}
+              <span>📞 {{ ch or '—' }}</span>
+              {% endif %}
+            </td>
+            <td>
+              <span style="font-size: 12px; color: var(--text-muted);">
+                {{ (entry.Message or '')[:80] }}{% if (entry.Message or '')|length > 80 %}...{% endif %}
+              </span>
+            </td>
+            <td>
+              <span style="font-size: 12px; white-space: nowrap;">{{ entry['Sent At'] or '—' }}</span>
+            </td>
+            <td>
+              {% if entry.Response %}
+              <span style="font-size: 12px; color: var(--success);">
+                ↩ "{{ entry.Response[:50] }}{% if entry.Response|length > 50 %}...{% endif %}"
+              </span>
+              {% elif entry['Response At'] %}
+              <span style="font-size: 12px; color: var(--warning);">Pending reply</span>
+              {% else %}
+              <span style="font-size: 12px; color: var(--text-muted);">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% set st = (entry.Status or '') | lower %}
+              {% if 'converted' in st %}
+              <span class="badge badge-converted">{{ entry.Status }}</span>
+              {% elif 'replied' in st or 'reply' in st %}
+              <span class="badge badge-replied">{{ entry.Status }}</span>
+              {% elif 'reorder' in st %}
+              <span class="badge badge-reorder">{{ entry.Status }}</span>
+              {% elif 'sent' in st %}
+              <span class="badge badge-pitched">{{ entry.Status }}</span>
+              {% else %}
+              <span class="badge badge-notcontacted">{{ entry.Status or 'Sent' }}</span>
+              {% endif %}
+            </td>
+            <td>
+              <span style="font-size: 12px; color: var(--text-muted);">{{ entry.Agent or 'Jordan Belfort' }}</span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div style="color: var(--text-muted); font-size: 13px; margin-top: 12px;">
+    {{ log|length }} message{{ 's' if log|length != 1 else '' }} shown
+  </div>
+
+  {% else %}
+  <div class="card">
+    <div class="empty-state">
+      <div class="empty-icon">📭</div>
+      <div class="empty-title">No outreach logged</div>
+      <p style="margin-bottom: 20px;">
+        {% if store_filter or channel_filter or date_filter %}
+        No messages match your filters. <a href="/outreach" style="color: var(--gold);">Clear filters</a>
+        {% else %}
+        Start pitching stores from the <a href="/leads" style="color: var(--gold);">Leads page</a>
+        {% endif %}
+      </p>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

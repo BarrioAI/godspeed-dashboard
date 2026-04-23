@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}Godspeed Retail Intelligence — Overview{% endblock %}
+
+{% block content %}
+<div class="container">
+
+  <div class="page-title">⚡ Godspeed Intelligence Unit</div>
+  <div class="page-sub">Welcome back, Goldie 👑 — Real-time intelligence for Godspeed's retail expansion</div>
+
+  {% if error %}
+  <div class="alert alert-warning">
+    ⚠️ Google Sheets connection issue: {{ error }} — showing cached/empty data
+  </div>
+  {% endif %}
+
+  <!-- STAT CARDS -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-icon">🏬</div>
+      <div class="stat-value">{{ stats.total }}</div>
+      <div class="stat-label">Total Stores</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">🎯</div>
+      <div class="stat-value">{{ stats.leads }}</div>
+      <div class="stat-label">Acquisition Leads</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">🏪</div>
+      <div class="stat-value">{{ stats.retailers }}</div>
+      <div class="stat-label">Active Retailers</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">📬</div>
+      <div class="stat-value">{{ sent }}</div>
+      <div class="stat-label">Pitches Sent</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">💬</div>
+      <div class="stat-value">{{ replied }}</div>
+      <div class="stat-label">Replies</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">✅</div>
+      <div class="stat-value">{{ converted }}</div>
+      <div class="stat-label">Converted</div>
+    </div>
+  </div>
+
+  <div class="two-col-grid">
+
+    <!-- RECENT ACTIVITY -->
+    <div class="card">
+      <div class="card-title"><span>📋</span> Recent Activity</div>
+      {% if recent %}
+      <div class="activity-list">
+        {% for item in recent %}
+        <div class="activity-item">
+          <div class="activity-icon">
+            {% if item.Channel == 'Instagram DM' %}📷
+            {% elif item.Channel == 'Email' %}📧
+            {% elif item.Channel == 'SMS' %}💬
+            {% else %}📞{% endif %}
+          </div>
+          <div class="activity-body">
+            <div class="activity-title">
+              {{ item['Store Name'] }}
+              <span class="badge badge-pitched" style="margin-left:8px; font-size:10px;">{{ item.Status or 'Sent' }}</span>
+            </div>
+            <div class="activity-meta">via {{ item.Channel }} · {{ item['Sent At'] }}</div>
+            {% if item.Response %}
+            <div class="activity-meta" style="color: #2ECC71; margin-top: 4px;">↩ "{{ item.Response[:60] }}{% if item.Response|length > 60 %}...{% endif %}"</div>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty-state">
+        <div class="empty-icon">📭</div>
+        <div class="empty-title">No outreach yet</div>
+        <p>Start pitching stores from the <a href="/leads" style="color: var(--gold);">Leads page</a></p>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- RIGHT COLUMN -->
+    <div>
+      <!-- REORDER ALERTS -->
+      {% if alerts %}
+      <div class="card">
+        <div class="card-title"><span>⚠️</span> Reorder Alerts</div>
+        {% for store in alerts %}
+        <div class="alert alert-warning" style="margin-bottom: 8px;">
+          <span>⚠️</span>
+          <div style="flex:1;">
+            <strong>{{ store['Store Name'] }}</strong> — {{ store.City }}, {{ store.State }}<br>
+            <small>Last order: {{ store['Last Order Date'] or 'Unknown' }}</small>
+          </div>
+          <button class="btn btn-sm btn-outline" onclick="sendReorder('{{ store['Store Name'] | e }}')">Send Reorder</button>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <!-- QUICK ACTIONS -->
+      <div class="card">
+        <div class="card-title"><span>⚡</span> Quick Actions</div>
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <a href="/leads" class="btn btn-primary">🎯 View Acquisition Leads</a>
+          <a href="/add-store" class="btn btn-outline">➕ Add Store Manually</a>
+          <a href="/scraper" class="btn btn-outline">🔍 Run Retail Scraper</a>
+          <a href="/outreach" class="btn btn-outline">📬 View Outreach Log</a>
+        </div>
+      </div>
+
+      <!-- CONVERSION FUNNEL -->
+      <div class="card">
+        <div class="card-title"><span>📊</span> Conversion Funnel</div>
+        {% set total_sent = sent if sent > 0 else 1 %}
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          <div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+              <span style="font-size:13px; color: var(--text-secondary);">Leads Identified</span>
+              <span style="font-size:13px; color: var(--gold);">{{ stats.leads }}</span>
+            </div>
+            <div style="background: var(--bg-surface); border-radius:4px; height:8px;">
+              <div style="background: var(--gold); height:100%; border-radius:4px; width:100%;"></div>
+            </div>
+          </div>
+          <div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+              <span style="font-size:13px; color: var(--text-secondary);">Pitched</span>
+              <span style="font-size:13px; color: #3498DB;">{{ sent }}</span>
+            </div>
+            <div style="background: var(--bg-surface); border-radius:4px; height:8px;">
+              <div style="background: #3498DB; height:100%; border-radius:4px; width:{% if stats.leads > 0 %}{{ [(sent / stats.leads * 100)|int, 100]|min }}{% else %}0{% endif %}%;"></div>
+            </div>
+          </div>
+          <div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+              <span style="font-size:13px; color: var(--text-secondary);">Replied</span>
+              <span style="font-size:13px; color: #2ECC71;">{{ replied }}</span>
+            </div>
+            <div style="background: var(--bg-surface); border-radius:4px; height:8px;">
+              <div style="background: #2ECC71; height:100%; border-radius:4px; width:{% if stats.leads > 0 %}{{ [(replied / stats.leads * 100)|int, 100]|min }}{% else %}0{% endif %}%;"></div>
+            </div>
+          </div>
+          <div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+              <span style="font-size:13px; color: var(--text-secondary);">Converted</span>
+              <span style="font-size:13px; color: var(--gold);">{{ converted }}</span>
+            </div>
+            <div style="background: var(--bg-surface); border-radius:4px; height:8px;">
+              <div style="background: linear-gradient(90deg, var(--gold), var(--gold-dim)); height:100%; border-radius:4px; width:{% if stats.leads > 0 %}{{ [(converted / stats.leads * 100)|int, 100]|min }}{% else %}0{% endif %}%;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

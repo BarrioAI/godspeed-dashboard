@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+drive-token.json
+google-credentials.json
+token*.json
+*credentials*.json
+venv/
+.venv/
+data/*.csv

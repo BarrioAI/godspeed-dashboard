@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block title %}Acquisition Leads — Godspeed{% endblock %}
+
+{% block content %}
+<div class="container">
+
+  <div class="page-title">🎯 Acquisition Leads</div>
+  <div class="page-sub">Streetwear retail prospects for Godspeed wholesale outreach</div>
+
+  {% if error %}
+  <div class="alert alert-warning">⚠️ {{ error }}</div>
+  {% endif %}
+
+  {% if request.args.get('added') %}
+  <div class="alert alert-success">✅ Store added successfully!</div>
+  {% endif %}
+
+  <!-- FILTERS -->
+  <form method="get" class="filter-bar">
+    <div class="filter-group">
+      <span class="filter-label">City</span>
+      <select name="city" onchange="this.form.submit()">
+        <option value="">All Cities</option>
+        {% for city in cities %}
+        <option value="{{ city }}" {% if city_filter == city.lower() %}selected{% endif %}>{{ city }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">State</span>
+      <select name="state" onchange="this.form.submit()">
+        <option value="">All States</option>
+        {% for state in states %}
+        <option value="{{ state }}" {% if state_filter == state.lower() %}selected{% endif %}>{{ state }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">Status</span>
+      <select name="status" onchange="this.form.submit()">
+        <option value="">All Statuses</option>
+        <option value="not contacted" {% if status_filter == 'not contacted' %}selected{% endif %}>Not Contacted</option>
+        <option value="pitched" {% if status_filter == 'pitched' %}selected{% endif %}>Pitched</option>
+        <option value="replied" {% if status_filter == 'replied' %}selected{% endif %}>Replied</option>
+        <option value="declined" {% if status_filter == 'declined' %}selected{% endif %}>Declined</option>
+      </select>
+    </div>
+    <a href="/leads" class="btn btn-outline btn-sm">Clear Filters</a>
+    <a href="/add-store" class="btn btn-primary btn-sm" style="margin-left: auto;">➕ Add Store</a>
+  </form>
+
+  <!-- BULK ACTION BAR -->
+  <div id="bulk-bar" class="bulk-bar">
+    <span id="bulk-count" class="bulk-count">0 stores selected</span>
+    <button class="btn btn-primary btn-sm" onclick="bulkPitch()">📬 Bulk Pitch Selected</button>
+    <button class="btn btn-outline btn-sm" onclick="clearSelection()">✕ Clear</button>
+  </div>
+
+  <!-- TABLE -->
+  {% if leads %}
+  <div class="card" style="padding: 0;">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th class="checkbox-col"><input type="checkbox" id="select-all"></th>
+            <th>Store Name</th>
+            <th>City</th>
+            <th>State</th>
+            <th>Email</th>
+            <th>Instagram</th>
+            <th>Phone</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for store in leads %}
+          <tr data-store="{{ store['Store Name'] | e }}">
+            <td class="checkbox-col">
+              <input type="checkbox" class="store-checkbox" data-store="{{ store['Store Name'] | e }}">
+            </td>
+            <td>
+              <strong>{{ store['Store Name'] or '—' }}</strong>
+              {% if store['Website'] %}
+              <br><a href="{{ store['Website'] }}" target="_blank" class="table-link">🌐 website</a>
+              {% endif %}
+            </td>
+            <td>{{ store['City'] or '—' }}</td>
+            <td>{{ store['State'] or '—' }}</td>
+            <td>
+              <span style="font-size: 12px; color: var(--text-muted);">{{ store['Email'] or '—' }}</span>
+            </td>
+            <td>
+              {% if store['Instagram'] %}
+              <a href="https://instagram.com/{{ store['Instagram'].lstrip('@') }}" target="_blank" class="table-link">
+                📷 {{ store['Instagram'] }}
+              </a>
+              {% else %}—{% endif %}
+            </td>
+            <td>
+              {% if store['Phone'] and '#ERROR' not in store['Phone']|string %}
+              <a href="tel:{{ store['Phone'] }}" class="table-link">{{ store['Phone'] }}</a>
+              {% else %}—{% endif %}
+            </td>
+            <td>
+              {% set status = store['Outreach Status'] | lower | replace(' ', '') %}
+              {% if status == 'pitched' %}
+              <span class="badge badge-pitched status-badge" data-store="{{ store['Store Name'] | e }}">Pitched</span>
+              {% elif status == 'replied' %}
+              <span class="badge badge-replied status-badge">Replied</span>
+              {% elif status == 'converted' %}
+              <span class="badge badge-converted status-badge">Converted</span>
+              {% elif status == 'declined' %}
+              <span class="badge badge-declined status-badge">Declined</span>
+              {% else %}
+              <span class="badge badge-notcontacted status-badge">Not Contacted</span>
+              {% endif %}
+            </td>
+            <td>
+              <button class="btn btn-primary btn-sm" onclick="openPitchModal('{{ store['Store Name'] | e }}')">
+                📬 Pitch
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div style="color: var(--text-muted); font-size: 13px; margin-top: 12px;">
+    Showing {{ leads|length }} lead{{ 's' if leads|length != 1 else '' }}
+  </div>
+
+  {% else %}
+  <div class="card">
+    <div class="empty-state">
+      <div class="empty-icon">🎯</div>
+      <div class="empty-title">No leads found</div>
+      <p style="margin-bottom: 20px;">
+        {% if city_filter or state_filter or status_filter %}
+        No leads match your filters. <a href="/leads" style="color: var(--gold);">Clear filters</a>
+        {% else %}
+        Add stores manually or run the scraper to find leads.
+        {% endif %}
+      </p>
+      <div style="display: flex; gap: 12px; justify-content: center;">
+        <a href="/add-store" class="btn btn-primary">➕ Add Store</a>
+        <a href="/scraper" class="btn btn-outline">🔍 Run Scraper</a>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+
+<!-- PITCH MODAL -->
+<div id="pitch-modal" class="modal-overlay">
+  <div class="modal">
+    <button class="modal-close" onclick="closePitchModal()">✕</button>
+    <div class="modal-title">📬 Send Pitch</div>
+    <div style="color: var(--text-muted); margin-bottom: 20px; font-size: 14px;">
+      Pitching: <strong id="modal-store-name" style="color: var(--white);"></strong>
+    </div>
+    <form id="pitch-form">
+      <input type="hidden" id="modal-store-input">
+      <div class="form-group" style="margin-bottom: 16px;">
+        <label>Channel</label>
+        <select id="modal-channel">
+          <option value="Instagram DM">Instagram DM</option>
+          <option value="Email">Email</option>
+          <option value="SMS">SMS</option>
+          <option value="Phone">Phone Call</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin-bottom: 20px;">
+        <label>Message</label>
+        <textarea id="modal-message" rows="4">Hey! We're Godspeed — a premium streetwear brand that's the perfect fit for your store. We noticed you carry some of the hottest brands in the game. Mind if we send over our lookbook?</textarea>
+      </div>
+      <div style="display: flex; gap: 12px;">
+        <button type="submit" class="btn btn-primary" style="flex: 1;">Send Pitch</button>
+        <button type="button" class="btn btn-outline" onclick="closePitchModal()">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function clearSelection() {
+  selectedStores.clear();
+  document.querySelectorAll('.store-checkbox').forEach(cb => cb.checked = false);
+  const sel = document.getElementById('select-all');
+  if (sel) sel.checked = false;
+  updateBulkBar();
+}
+</script>
+{% endblock %}

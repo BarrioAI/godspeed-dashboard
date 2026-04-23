@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Godspeed Retail Intelligence{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header class="header">
+    <a href="/" class="header-brand">
+      <img src="/static/godspeed-logo.jpg" style="height:40px;width:auto;border-radius:4px;margin-right:8px;">
+      <div>
+        <div class="brand-name">GODSPEED INTELLIGENCE UNIT</div>
+        <span class="brand-sub">Welcome, Goldie 👑</span>
+      </div>
+    </a>
+    <nav class="header-nav">
+      <a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">⚡ Overview</a>
+      <a href="/leads" class="nav-link {% if request.path == '/leads' %}active{% endif %}">🎯 Leads</a>
+      <a href="/retailers" class="nav-link {% if request.path == '/retailers' %}active{% endif %}">🏪 Retailers</a>
+      <a href="/outreach" class="nav-link {% if request.path == '/outreach' %}active{% endif %}">📬 Outreach</a>
+      <a href="/add-store" class="nav-link {% if request.path == '/add-store' %}active{% endif %}">➕ Add Store</a>
+      <a href="/scraper" class="nav-link {% if request.path == '/scraper' %}active{% endif %}">🔍 Scraper</a>
+    </nav>
+  </header>
+
+  <!-- MAIN CONTENT -->
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- MOBILE NAV -->
+  <nav class="mobile-nav">
+    <a href="/" class="{% if request.path == '/' %}active{% endif %}">
+      <span class="nav-icon">⚡</span>Home
+    </a>
+    <a href="/leads" class="{% if request.path == '/leads' %}active{% endif %}">
+      <span class="nav-icon">🎯</span>Leads
+    </a>
+    <a href="/retailers" class="{% if request.path == '/retailers' %}active{% endif %}">
+      <span class="nav-icon">🏪</span>Stores
+    </a>
+    <a href="/outreach" class="{% if request.path == '/outreach' %}active{% endif %}">
+      <span class="nav-icon">📬</span>Outreach
+    </a>
+    <a href="/scraper" class="{% if request.path == '/scraper' %}active{% endif %}">
+      <span class="nav-icon">🔍</span>Scraper
+    </a>
+  </nav>
+
+  <!-- TOAST CONTAINER -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="/static/app.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
