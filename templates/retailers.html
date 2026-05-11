@@ -42,7 +42,9 @@
             <td>
               <strong>{{ store['Store Name'] or '—' }}</strong>
               {% if store['Website'] %}
-              <br><a href="{{ store['Website'] }}" target="_blank" class="table-link">🌐 website</a>
+              {% set ws_url = store['Website'] %}
+              {% if not ws_url.startswith('http') %}{% set ws_url = 'https://' + ws_url %}{% endif %}
+              <br><a href="{{ ws_url }}" target="_blank" class="table-link">🌐 website</a>
               {% endif %}
             </td>
             <td>{{ store['City'] or '—' }}</td>
