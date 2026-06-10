@@ -91,7 +91,12 @@ def _read_records(sheet_name):
             return list(csv.DictReader(f)), None
     try:
         ws = get_sheet().worksheet(sheet_name)
-        return ws.get_all_records(), None
+        # Cast every cell to str so Sheets mode matches CSV mode. gspread auto-types
+        # numeric-looking cells (e.g. a store literally named "424") to int/float,
+        # which breaks sorting and .lower() across mixed str/int values.
+        recs = [{k: ("" if v is None else str(v)) for k, v in row.items()}
+                for row in ws.get_all_records()]
+        return recs, None
     except Exception as e:
         return [], str(e)
 
