@@ -23,6 +23,7 @@
       <a href="/leads" class="nav-link {% if request.path == '/leads' %}active{% endif %}">🎯 Leads</a>
       <a href="/retailers" class="nav-link {% if request.path == '/retailers' %}active{% endif %}">🏪 Retailers</a>
       <a href="/outreach" class="nav-link {% if request.path == '/outreach' %}active{% endif %}">📬 Outreach</a>
+      <a href="/orders" class="nav-link {% if request.path == '/orders' %}active{% endif %}">📦 Orders</a>
       <a href="/add-store" class="nav-link {% if request.path == '/add-store' %}active{% endif %}">➕ Add Store</a>
       <a href="/scraper" class="nav-link {% if request.path == '/scraper' %}active{% endif %}">🔍 Scraper</a>
     </nav>
@@ -46,6 +47,9 @@
     </a>
     <a href="/outreach" class="{% if request.path == '/outreach' %}active{% endif %}">
       <span class="nav-icon">📬</span>Outreach
+    </a>
+    <a href="/orders" class="{% if request.path == '/orders' %}active{% endif %}">
+      <span class="nav-icon">📦</span>Orders
     </a>
     <a href="/scraper" class="{% if request.path == '/scraper' %}active{% endif %}">
       <span class="nav-icon">🔍</span>Scraper
