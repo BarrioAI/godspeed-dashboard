@@ -100,7 +100,7 @@ def load_rows(path):
                 csv_col = COLUMN_MAP[sheet_col]
                 val = "" if csv_col is None else (r.get(csv_col, "") or "").strip()
                 if sheet_col == "pipeline_stage" and not val:
-                    val = "New Lead"
+                    val = "Not Contacted"
                 out.append(val)
             rows.append(out)
     return rows
