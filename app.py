@@ -24,9 +24,11 @@ CORS(app)
 
 # ─────────────────────────────────────────  CONFIG
 SPREADSHEET_ID = "1My0941FahT4XvcdOK1UQtnMPA1qYI-Pqmkx-9v5nEnA"
-STORES_SHEET   = "STORES"
-OUTREACH_SHEET = "OUTREACH_LOG"
-ORDERS_SHEET   = "ORDERS"
+STORES_SHEET     = "STORES"
+OUTREACH_SHEET   = "OUTREACH_LOG"
+ORDERS_SHEET     = "ORDERS"
+CANDIDATES_SHEET = "CANDIDATES"
+INVOICES_SHEET   = "INVOICES"
 
 TOKEN_PATH = os.environ.get("GOOGLE_TOKEN_PATH", "/Users/elbarrio/.openclaw/drive-token.json")
 CREDS_PATH = os.environ.get("GOOGLE_CREDS_PATH", "/Users/elbarrio/.openclaw/google-credentials.json")
