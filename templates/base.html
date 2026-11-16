@@ -3,61 +3,57 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{% block title %}Godspeed Retail Intelligence{% endblock %}</title>
+  <title>{% block title %}Godspeed Wholesale{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Big+Shoulders+Display:wght@600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+  <link rel="icon" href="/static/godspeed-logo.jpg">
 </head>
 <body>
+  {% set nav = [
+    ('/', 'Overview', 'M3 12l9-8 9 8M5 10v10h14V10'),
+    ('/leads', 'Leads', 'M12 3a9 9 0 100 18 9 9 0 000-18zm0 5a4 4 0 100 8 4 4 0 000-8z'),
+    ('/outreach', 'Outreach', 'M3 6h18v12H3zM3 7l9 7 9-7'),
+    ('/retailers', 'Retailers', 'M4 9l1-5h14l1 5M5 9v11h14V9M9 20v-6h6v6'),
+    ('/orders', 'Orders', 'M4 7l8-4 8 4v10l-8 4-8-4zM4 7l8 4 8-4M12 11v10'),
+    ('/quality', 'Data quality', 'M5 13l4 4L19 7'),
+    ('/add-store', 'Add store', 'M12 5v14M5 12h14'),
+    ('/scraper', 'Scraper', 'M11 4a7 7 0 100 14 7 7 0 000-14zM20 20l-4-4'),
+  ] %}
 
-  <!-- HEADER -->
-  <header class="header">
-    <a href="/" class="header-brand">
-      <img src="/static/godspeed-logo.jpg" style="height:40px;width:auto;border-radius:4px;margin-right:8px;">
-      <div>
-        <div class="brand-name">GODSPEED INTELLIGENCE UNIT</div>
-        <span class="brand-sub">Welcome, Goldie 👑</span>
-      </div>
+  <aside class="sidebar">
+    <a href="/" class="brand">
+      <img src="/static/godspeed-logo.jpg" alt="" class="brand-mark">
+      <span class="brand-text">
+        <span class="brand-name">Godspeed</span>
+        <span class="brand-sub">Wholesale</span>
+      </span>
     </a>
-    <nav class="header-nav">
-      <a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">⚡ Overview</a>
-      <a href="/leads" class="nav-link {% if request.path == '/leads' %}active{% endif %}">🎯 Leads</a>
-      <a href="/retailers" class="nav-link {% if request.path == '/retailers' %}active{% endif %}">🏪 Retailers</a>
-      <a href="/outreach" class="nav-link {% if request.path == '/outreach' %}active{% endif %}">📬 Outreach</a>
-      <a href="/orders" class="nav-link {% if request.path == '/orders' %}active{% endif %}">📦 Orders</a>
-      <a href="/quality" class="nav-link {% if request.path == '/quality' %}active{% endif %}">🧹 Quality</a>
-      <a href="/add-store" class="nav-link {% if request.path == '/add-store' %}active{% endif %}">➕ Add Store</a>
-      <a href="/scraper" class="nav-link {% if request.path == '/scraper' %}active{% endif %}">🔍 Scraper</a>
+    <nav class="side-nav" aria-label="Main">
+      {% for href, label, icon in nav %}
+      <a href="{{ href }}" class="nav-link {% if request.path == href %}active{% endif %}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="{{ icon }}"/></svg>
+        <span>{{ label }}</span>
+      </a>
+      {% endfor %}
     </nav>
-  </header>
+    <div class="side-foot">Signed in as Goldie</div>
+  </aside>
 
-  <!-- MAIN CONTENT -->
   <main>
     {% block content %}{% endblock %}
   </main>
 
-  <!-- MOBILE NAV -->
-  <nav class="mobile-nav">
-    <a href="/" class="{% if request.path == '/' %}active{% endif %}">
-      <span class="nav-icon">⚡</span>Home
+  <nav class="mobile-nav" aria-label="Main">
+    {% for href, label, icon in nav[:6] %}
+    <a href="{{ href }}" class="{% if request.path == href %}active{% endif %}">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="{{ icon }}"/></svg>
+      {{ label.split(' ')[-1]|capitalize }}
     </a>
-    <a href="/leads" class="{% if request.path == '/leads' %}active{% endif %}">
-      <span class="nav-icon">🎯</span>Leads
-    </a>
-    <a href="/retailers" class="{% if request.path == '/retailers' %}active{% endif %}">
-      <span class="nav-icon">🏪</span>Stores
-    </a>
-    <a href="/outreach" class="{% if request.path == '/outreach' %}active{% endif %}">
-      <span class="nav-icon">📬</span>Outreach
-    </a>
-    <a href="/orders" class="{% if request.path == '/orders' %}active{% endif %}">
-      <span class="nav-icon">📦</span>Orders
-    </a>
-    <a href="/quality" class="{% if request.path == '/quality' %}active{% endif %}">
-      <span class="nav-icon">🧹</span>Quality
-    </a>
+    {% endfor %}
   </nav>
 
-  <!-- TOAST CONTAINER -->
   <div id="toast-container" class="toast-container"></div>
 
   <script src="/static/app.js"></script>

@@ -4,11 +4,11 @@
 {% block content %}
 <div class="container">
 
-  <div class="page-title">🧹 Data Quality</div>
+  <div class="page-title">Data Quality</div>
   <div class="page-sub">What the STORES tab looks like once chains, brand stores, non-stores and fake contact details are filtered out</div>
 
   {% if error %}
-  <div class="alert alert-danger">⚠️ Can't reach Google Sheets: {{ error }}</div>
+  <div class="alert alert-danger">Can't reach Google Sheets: {{ error }}</div>
   {% endif %}
 
   <div class="stats-grid">
@@ -38,7 +38,7 @@
     <div>
       <!-- ACTIONS -->
       <div class="card">
-        <div class="card-title"><span>⚙️</span> Keep it clean</div>
+        <div class="card-title">Keep it clean</div>
 
         <div class="action-row">
           <div>
@@ -76,7 +76,7 @@
 
       <!-- CONTACT COVERAGE -->
       <div class="card">
-        <div class="card-title"><span>📇</span> Contact info on qualified leads</div>
+        <div class="card-title">Contact info on qualified leads</div>
         {% for label, count, pct, verified in [
             ('Instagram', stats.with_ig, stats.pct_ig, stats.verified_ig),
             ('Website', stats.with_web, stats.pct_web, stats.verified_web),
@@ -96,7 +96,7 @@
     <div>
       <!-- WHY ROWS WERE HELD BACK -->
       <div class="card">
-        <div class="card-title"><span>🚫</span> Why stores were held back</div>
+        <div class="card-title">Why stores were held back</div>
         {% if breakdown %}
         <table class="plain-table">
           {% for label, count in breakdown %}
@@ -111,7 +111,7 @@
 
       <!-- CONTACT PROBLEMS -->
       <div class="card">
-        <div class="card-title"><span>💡</span> Contact info to fix ({{ problem_count }})</div>
+        <div class="card-title">Contact info to fix ({{ problem_count }})</div>
         {% if problems %}
         <table class="plain-table">
           {% for store in problems %}
@@ -132,7 +132,7 @@
 
   <!-- REVIEW QUEUE -->
   <div class="card">
-    <div class="card-title"><span>🔎</span> Needs review ({{ review_count }})</div>
+    <div class="card-title">Needs review ({{ review_count }})</div>
     {% if review %}
     <div class="form-hint" style="margin-bottom: 12px;">
       These look like real stores, but nothing on the row proves they sell streetwear. Approve the ones you know.
@@ -144,7 +144,7 @@
           {% for store in review %}
           <tr>
             <td><strong>{{ store['Store Name'] }}</strong>
-              {% if store['Website'] %}<br><a href="{{ store['Website'] }}" target="_blank" rel="noopener" class="table-link">🌐 website</a>{% endif %}</td>
+              {% if store['Website'] %}<br><a href="{{ store['Website'] }}" target="_blank" rel="noopener" class="table-link">website</a>{% endif %}</td>
             <td>{{ store.City }}{% if store.State %}, {{ store.State }}{% endif %}</td>
             <td>{% if store.Instagram %}<a href="https://instagram.com/{{ store.Instagram.lstrip('@') }}" target="_blank" rel="noopener" class="table-link">{{ store.Instagram }}</a>{% else %}—{% endif %}</td>
             <td><span class="muted">{{ store['Flag Reasons'] }}</span></td>

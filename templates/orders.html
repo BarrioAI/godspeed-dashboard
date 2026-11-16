@@ -4,37 +4,32 @@
 {% block content %}
 <div class="container">
 
-  <div class="page-title">📦 Orders &amp; Commission</div>
+  <div class="page-title">Orders &amp; Commission</div>
   <div class="page-sub">Fulfillment, service, and your 10% commission — all in one place</div>
 
   {% if error %}
-  <div class="alert alert-warning">⚠️ {{ error }}</div>
+  <div class="alert alert-warning">{{ error }}</div>
   {% endif %}
 
   <!-- SUMMARY CARDS -->
   <div class="stats-grid">
     <div class="stat-card">
-      <div class="stat-icon">📦</div>
       <div class="stat-value">{{ summary.orders }}</div>
       <div class="stat-label">Total Orders</div>
     </div>
     <div class="stat-card">
-      <div class="stat-icon">💵</div>
       <div class="stat-value">${{ '{:,.0f}'.format(summary.revenue) }}</div>
       <div class="stat-label">Wholesale Revenue</div>
     </div>
     <div class="stat-card">
-      <div class="stat-icon">⏳</div>
       <div class="stat-value">${{ '{:,.0f}'.format(summary.comm_pending) }}</div>
       <div class="stat-label">Commission Pending</div>
     </div>
     <div class="stat-card">
-      <div class="stat-icon">🧾</div>
       <div class="stat-value">${{ '{:,.0f}'.format(summary.comm_invoiced) }}</div>
       <div class="stat-label">Commission Invoiced</div>
     </div>
     <div class="stat-card">
-      <div class="stat-icon">✅</div>
       <div class="stat-value">${{ '{:,.0f}'.format(summary.comm_paid) }}</div>
       <div class="stat-label">Commission Paid</div>
     </div>
@@ -84,7 +79,6 @@
   {% else %}
   <div class="card">
     <div class="empty-state">
-      <div class="empty-icon">📦</div>
       <div class="empty-title">No orders yet</div>
       <p>When a store places its first order, log it here — fulfillment and commission track automatically.</p>
     </div>

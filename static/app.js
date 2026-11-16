@@ -52,7 +52,7 @@ async function sendReorder(btn) {
   const store = storeOf(btn);
   if (!confirm(`Log a reorder check-in for ${store.name}?`)) return;
   const data = await postJSON('/api/send-reorder', { row: store.row, store_name: store.name });
-  showToast(data.success ? `✅ ${data.message}` : `❌ ${data.error}`, data.success ? 'success' : 'error');
+  showToast(data.success ? `${data.message}` : `${data.error}`, data.success ? 'success' : 'error');
 }
 
 // ─── BULK SELECT ───
@@ -99,11 +99,11 @@ async function bulkPitch() {
   if (!confirm(`Log an Instagram DM pitch for ${stores.length} store${stores.length === 1 ? '' : 's'}?`)) return;
   const data = await postJSON('/api/bulk-pitch', { stores, channel: 'Instagram DM' });
   if (data.success) {
-    showToast(`✅ ${data.message}`, 'success');
+    showToast(`${data.message}`, 'success');
     stores.forEach(s => markPitched(s.row));
     clearSelection();
   } else {
-    showToast(`❌ ${data.error}`, 'error');
+    showToast(`${data.error}`, 'error');
   }
 }
 
@@ -162,11 +162,11 @@ async function submitPitch(e) {
     message: document.getElementById('modal-message').value
   });
   if (data.success) {
-    showToast(`✅ ${data.message}`, 'success');
+    showToast(`${data.message}`, 'success');
     markPitched(row);
     closePitchModal();
   } else {
-    showToast(`❌ ${data.error}`, 'error');
+    showToast(`${data.error}`, 'error');
   }
 }
 
@@ -177,10 +177,10 @@ async function reviewStore(btn, decision) {
   const data = await postJSON('/api/review', { row: store.row, store_name: store.name, decision });
   if (!data.success) {
     btn.disabled = false;
-    showToast(`❌ ${data.error}`, 'error');
+    showToast(`${data.error}`, 'error');
     return;
   }
-  showToast(decision === 'approve' ? `✅ ${store.name} added to qualified leads` : `${store.name} rejected`, 'success');
+  showToast(decision === 'approve' ? `${store.name} added to qualified leads` : `${store.name} rejected`, 'success');
   const tr = btn.closest('tr');
   if (tr) tr.remove();
 }
@@ -195,7 +195,7 @@ async function startJob(btn, name = 'verify') {
   const data = await postJSON('/api/job/start', { job: name });
   if (!data.success) {
     if (btn) btn.disabled = false;
-    showToast(`❌ ${data.error}`, 'error');
+    showToast(`${data.error}`, 'error');
     return;
   }
   watchJob();
@@ -229,10 +229,10 @@ async function pollJob() {
     clearInterval(jobTimer);
     jobTimer = null;
     if (data.error) {
-      showToast(`❌ ${data.error}`, 'error');
+      showToast(`${data.error}`, 'error');
       document.querySelectorAll('button[onclick^="startJob"]').forEach(b => (b.disabled = false));
     } else if (onJobDone) {
-      showToast(`✅ ${data.message}`, 'success');
+      showToast(`${data.message}`, 'success');
       setTimeout(onJobDone, 1200);
     }
   }
