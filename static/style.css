@@ -412,8 +412,8 @@ tbody tr { border-bottom: 1px solid var(--line); transition: background 0.12s; }
 tbody tr:last-child { border-bottom: none; }
 tbody tr:hover { background: var(--raised); }
 tbody td { padding: 12px 12px; color: var(--text-2); vertical-align: middle; }
-.cell-store { min-width: 220px; max-width: 290px; }
-a.site-link { display: inline-block; max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.cell-store { min-width: 210px; max-width: 262px; }
+a.site-link { display: inline-block; max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .cell-store strong { color: var(--text); font-weight: 600; font-size: 14.5px; }
 .cell-actions { white-space: nowrap; }
 .cell-actions .btn + .btn { margin-left: 4px; }
