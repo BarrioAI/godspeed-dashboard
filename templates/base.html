@@ -12,7 +12,7 @@
   <!-- HEADER -->
   <header class="header">
     <a href="/" class="header-brand">
-      <img src="/static/godspeed-logo.jpg" style="height:40px;width:auto;border-radius:4px;margin-right:8px;">
+      <img src="/static/godspeed-logo.jpg" alt="" style="height:40px;width:auto;border-radius:4px;margin-right:8px;">
       <div>
         <div class="brand-name">GODSPEED INTELLIGENCE UNIT</div>
         <span class="brand-sub">Welcome, Goldie 👑</span>
@@ -23,8 +23,8 @@
       <a href="/leads" class="nav-link {% if request.path == '/leads' %}active{% endif %}">🎯 Leads</a>
       <a href="/retailers" class="nav-link {% if request.path == '/retailers' %}active{% endif %}">🏪 Retailers</a>
       <a href="/outreach" class="nav-link {% if request.path == '/outreach' %}active{% endif %}">📬 Outreach</a>
+      <a href="/quality" class="nav-link {% if request.path == '/quality' %}active{% endif %}">🧹 Data Quality</a>
       <a href="/add-store" class="nav-link {% if request.path == '/add-store' %}active{% endif %}">➕ Add Store</a>
-      <a href="/scraper" class="nav-link {% if request.path == '/scraper' %}active{% endif %}">🔍 Scraper</a>
     </nav>
   </header>
 
@@ -47,8 +47,8 @@
     <a href="/outreach" class="{% if request.path == '/outreach' %}active{% endif %}">
       <span class="nav-icon">📬</span>Outreach
     </a>
-    <a href="/scraper" class="{% if request.path == '/scraper' %}active{% endif %}">
-      <span class="nav-icon">🔍</span>Scraper
+    <a href="/quality" class="{% if request.path == '/quality' %}active{% endif %}">
+      <span class="nav-icon">🧹</span>Quality
     </a>
   </nav>
 

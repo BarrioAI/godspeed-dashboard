@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Set up — Godspeed{% endblock %}
+
+{% block content %}
+<div class="container" style="max-width: 760px;">
+  <div class="page-title">🧹 Build the clean database</div>
+  <div class="page-sub">One step before the dashboard has anything to show</div>
+
+  <div class="card">
+    <p style="color: var(--text-secondary); line-height: 1.7; margin-bottom: 16px;">
+      The spreadsheet has no <strong style="color: var(--white);">MASTER DATABASE</strong> tab yet.
+      Building it reads every store tab (Acquisition Leads, Stores, the city tabs, the old backup),
+      merges duplicates, removes fake phone numbers and broken Instagram handles, and flags chains,
+      brand-owned stores and pages that aren't stores.
+    </p>
+    <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 20px;">
+      Nothing is deleted. Your existing tabs are not changed — a new tab is added.
+    </p>
+    <button id="build-btn" class="btn btn-primary" style="padding: 14px 22px; font-size: 15px;"
+            onclick="startJob('rebuild', this)" {% if job.running %}disabled{% endif %}>
+      Build clean database
+    </button>
+    {% include "_job.html" %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>onJobDone = () => window.location.href = '/quality';</script>
+{% endblock %}

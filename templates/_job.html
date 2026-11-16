@@ -1,0 +1,8 @@
+{# Progress panel for the rebuild / verify background jobs. #}
+<div id="job-panel" class="job-panel {% if job.running %}show{% endif %}" data-running="{{ 'true' if job.running else 'false' }}">
+  <div class="job-row">
+    <span id="job-message">{{ job.message }}</span>
+    <button id="job-stop" class="btn btn-outline btn-sm" onclick="stopJob()" style="display:none;">Stop</button>
+  </div>
+  <div class="job-bar"><div id="job-bar-fill" class="job-bar-fill"></div></div>
+</div>

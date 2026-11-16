@@ -42,9 +42,7 @@
             <td>
               <strong>{{ store['Store Name'] or '—' }}</strong>
               {% if store['Website'] %}
-              {% set ws_url = store['Website'] %}
-              {% if not ws_url.startswith('http') %}{% set ws_url = 'https://' + ws_url %}{% endif %}
-              <br><a href="{{ ws_url }}" target="_blank" class="table-link">🌐 website</a>
+              <br><a href="{{ store['Website'] }}" target="_blank" rel="noopener" class="table-link">🌐 website</a>
               {% endif %}
             </td>
             <td>{{ store['City'] or '—' }}</td>
@@ -79,8 +77,9 @@
               {% endif %}
             </td>
             <td>
-              <button class="btn btn-outline btn-sm" onclick="sendReorder('{{ store['Store Name'] | e }}')">
-                📦 Reorder
+              <button class="btn btn-outline btn-sm" onclick="sendReorder(this)"
+                      data-row="{{ store._row }}" data-store="{{ store['Store Name'] }}">
+                📦 Log reorder
               </button>
             </td>
           </tr>
@@ -100,7 +99,7 @@
     <div class="empty-state">
       <div class="empty-icon">🏪</div>
       <div class="empty-title">No retailers yet</div>
-      <p style="margin-bottom: 20px;">Convert leads into retailers by pitching them on the <a href="/leads" style="color: var(--gold);">Leads page</a></p>
+      <p style="margin-bottom: 20px;">A store shows here once its Outreach Status is Converted or it is marked as carrying Godspeed.</p>
       <a href="/add-store" class="btn btn-primary">➕ Add Retailer</a>
     </div>
   </div>

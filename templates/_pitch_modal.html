@@ -1,0 +1,36 @@
+<!-- PITCH MODAL -->
+<div id="pitch-modal" class="modal-overlay">
+  <div class="modal">
+    <button class="modal-close" onclick="closePitchModal()">✕</button>
+    <div class="modal-title">📬 Log a pitch</div>
+    <div style="color: var(--text-muted); margin-bottom: 6px; font-size: 14px;">
+      Pitching: <strong id="modal-store-name" style="color: var(--white);"></strong>
+    </div>
+    <div class="form-hint" style="margin-bottom: 16px;">
+      This records the pitch and marks the store as Pitched. Send the message yourself —
+      <span id="modal-links"></span>
+    </div>
+    <form id="pitch-form">
+      <input type="hidden" id="modal-store-input">
+      <input type="hidden" id="modal-row-input">
+      <div class="form-group" style="margin-bottom: 16px;">
+        <label for="modal-channel">Channel</label>
+        <select id="modal-channel">
+          <option value="Instagram DM">Instagram DM</option>
+          <option value="Email">Email</option>
+          <option value="SMS">SMS</option>
+          <option value="Phone">Phone Call</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin-bottom: 20px;">
+        <label for="modal-message">Message</label>
+        <textarea id="modal-message" rows="4">Hey! We're Godspeed — a premium streetwear brand that's the perfect fit for your store. We noticed you carry some of the hottest brands in the game. Mind if we send over our lookbook?</textarea>
+      </div>
+      <div style="display: flex; gap: 12px;">
+        <button type="submit" class="btn btn-primary" style="flex: 1;">Log Pitch</button>
+        <button type="button" class="btn btn-outline" onclick="copyPitch()">Copy message</button>
+        <button type="button" class="btn btn-outline" onclick="closePitchModal()">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
