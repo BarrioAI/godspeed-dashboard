@@ -538,3 +538,57 @@ def test_verify_saves_as_it_goes_and_resumes(client, ss, site, monkeypatch):
     assert dashboard.verify_stores()["checked"] == 0
     status = client.get("/api/job/status").json
     assert status["boot"]                                            # lets a caller detect a restart
+
+
+def test_apply_verification_uses_only_the_stores_own_site(tmp_path, capsys):
+    import csv
+    import super_clean
+    leads = [
+        _lead("Hype24/7", "Atlanta", "GA", "https://hype2407.com/", "@hype2407", "(902) 999-9862"),      # wrong phone
+        _lead("Coppra Miami", "Miami", "FL", "https://coppramiami.com/", "@coppra.us"),                  # wrong IG
+        _lead("Sole Supremacy", "San Jose", "CA", "https://solesupremacy.com/"),                         # blanks
+        _lead("Best Boutiques in Town", "Reno", "NV", "https://citymagazine.com/x"),                     # not its site
+        _lead("Fresh Kicks", "Tulsa", "OK", "https://freshkicks.com/", "@freshkicks"),                   # platform IG
+        _lead("Changed Since", "Boise", "ID", "https://changedsince.com/", "@changedsince", "(208) 344-1000"),
+    ]
+    for r in leads:
+        r["Score Breakdown"] = "Contact:0/Brand:5/Market:5/Reach:0"
+    path = tmp_path / "leads.csv"
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=LEADS_HEADER); w.writeheader(); w.writerows(leads)
+
+    def check(name, city, website, instagram="", phone="", **found):
+        row = dict.fromkeys(sheets.VERIFY_HEADERS, "")
+        row.update(store_name=name, city=city, website=website, instagram=instagram, phone=phone, **found)
+        return row
+
+    checks = [
+        check("Hype24/7", "Atlanta", "https://hype2407.com/", "@hype2407", "(902) 999-9862",
+              suggested_fixes="Phone: website shows (470) 560-1388, sheet has (902) 999-9862"),
+        check("Coppra Miami", "Miami", "https://coppramiami.com/", "@coppra.us",
+              suggested_fixes="Instagram: website links @coppramiami, sheet has @coppra.us"),
+        check("Sole Supremacy", "San Jose", "https://solesupremacy.com/", found_instagram="@solesupremacy",
+              found_phone="(408) 800-4950", found_email="hello@solesupremacy.com"),
+        check("Best Boutiques in Town", "Reno", "https://citymagazine.com/x", found_phone="(775) 322-1000"),
+        check("Fresh Kicks", "Tulsa", "https://freshkicks.com/", "@freshkicks",
+              suggested_fixes="Instagram: website links @shopify, sheet has @freshkicks"),
+        check("Changed Since", "Boise", "https://changedsince.com/", "@changedsince", "(208) 999-0000",
+              suggested_fixes="Phone: website shows (208) 555-0000, sheet has (208) 999-0000"),
+    ]
+    vpath = tmp_path / "verification.csv"
+    with open(vpath, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=sheets.VERIFY_HEADERS); w.writeheader(); w.writerows(checks)
+
+    changes = tmp_path / "changes.csv"
+    super_clean.apply_verification(str(vpath), str(path), str(changes))
+    out = {r["Store Name"]: r for r in csv.DictReader(open(path, encoding="utf-8"))}
+    assert out["Hype24/7"]["Phone"] == "(470) 560-1388"
+    assert out["Coppra Miami"]["Instagram"] == "@coppramiami"
+    sole = out["Sole Supremacy"]
+    assert (sole["Instagram"], sole["Phone"], sole["Email"]) == ("@solesupremacy", "(408) 800-4950", "hello@solesupremacy.com")
+    assert sole["Score Breakdown"] == "Contact:30/Brand:5/Market:5/Reach:20" and sole["Lead Score"] == "60"
+    assert out["Best Boutiques in Town"]["Phone"] == ""            # the page is not the store's own
+    assert out["Fresh Kicks"]["Instagram"] == "@freshkicks"        # @shopify is not this store
+    assert out["Changed Since"]["Phone"] == "(208) 344-1000"       # row edited after the check
+    assert len(list(csv.DictReader(open(changes, encoding="utf-8")))) == 5
+    assert len(out) == 6
