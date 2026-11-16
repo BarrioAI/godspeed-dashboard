@@ -5,7 +5,7 @@
 <div class="container">
 
   <div class="page-title">🧹 Data Quality</div>
-  <div class="page-sub">How clean the store list is, and the two buttons that keep it that way</div>
+  <div class="page-sub">What the STORES tab looks like once chains, brand stores, non-stores and fake contact details are filtered out</div>
 
   {% if error %}
   <div class="alert alert-danger">⚠️ Can't reach Google Sheets: {{ error }}</div>
@@ -28,6 +28,10 @@
       <div class="stat-value">{{ stats.no_contact }}</div>
       <div class="stat-label">Qualified, no contact info</div>
     </a>
+    <div class="stat-card">
+      <div class="stat-value">{{ stats.hidden_phones }}</div>
+      <div class="stat-label">Fake phone numbers hidden</div>
+    </div>
   </div>
 
   <div class="two-col-grid">
@@ -41,28 +45,18 @@
             <strong>Verify contact info</strong>
             <div class="form-hint">
               Opens each store's website, confirms the Instagram and phone shown there match the sheet,
-              fills in blanks, and checks the site loads. Takes several minutes.
+              finds missing ones, and checks the site loads. Takes several minutes. Results go to the
+              VERIFICATION tab; STORES is not changed.
               {% if not verified_any %}<br><span style="color: var(--warning);">Not run yet — contact info is format-checked only.</span>{% endif %}
             </div>
           </div>
-          <button class="btn btn-primary" onclick="startJob('verify', this)" {% if job.running %}disabled{% endif %}>Verify now</button>
-        </div>
-
-        <div class="action-row">
-          <div>
-            <strong>Rebuild from source tabs</strong>
-            <div class="form-hint">
-              Re-reads every store tab and re-applies the cleaning rules. Run it after new stores are
-              added to the other tabs. Outreach statuses and your review decisions are kept.
-            </div>
-          </div>
-          <button class="btn btn-outline" onclick="startJob('rebuild', this)" {% if job.running %}disabled{% endif %}>Rebuild</button>
+          <button class="btn btn-primary" onclick="startJob(this)" {% if job.running %}disabled{% endif %}>Verify now</button>
         </div>
 
         {% include "_job.html" %}
         {% if job.finished_at and not job.running %}
         <div class="form-hint" style="margin-top: 10px;">
-          Last job: {{ job.name }} at {{ job.finished_at }} — {{ job.error or job.message }}
+          Last run {{ job.finished_at }} — {{ job.error or job.message }}
         </div>
         {% endif %}
       </div>
@@ -96,7 +90,7 @@
           <tr><td>{{ label }}</td><td class="num">{{ count }}</td></tr>
           {% endfor %}
         </table>
-        <div class="form-hint" style="margin-top: 10px;">A store can be held back for more than one reason. Nothing is deleted — see the Rejected and Needs review tabs on Leads.</div>
+        <div class="form-hint" style="margin-top: 10px;">A store can be held back for more than one reason. Nothing is deleted from STORES — see the Rejected and Needs review views on Leads.</div>
         {% else %}
         <div class="form-hint">Every store is qualified.</div>
         {% endif %}

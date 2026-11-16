@@ -1,9 +1,9 @@
 """
 In-memory stand-in for a gspread Spreadsheet (the subset sheets.py uses).
 
-Used by the tests, and by the dashboard itself when GODSPEED_DEV_XLSX points at
-an .xlsx export of the workbook — that runs the whole app locally against a
-copy of the data, with writes kept in memory.
+Used by the tests, and by the dashboard itself in local dev mode:
+GODSPEED_LOCAL_DIR=<folder of TAB.csv files> or GODSPEED_DEV_XLSX=<export.xlsx>.
+The whole app then runs against a copy of the data, with writes kept in memory.
 """
 
 from __future__ import annotations
@@ -67,6 +67,18 @@ class FakeSpreadsheet:
             while rows and not any(rows[-1]):
                 rows.pop()
             tabs[ws.title] = rows
+        return cls(tabs)
+
+    @classmethod
+    def from_csv_dir(cls, path: str):
+        """One tab per <TAB>.csv file (the dashboard's GODSPEED_LOCAL_DIR mode)."""
+        import csv
+        import os
+        tabs = {}
+        for name in sorted(os.listdir(path)):
+            if name.lower().endswith(".csv"):
+                with open(os.path.join(path, name), newline="", encoding="utf-8") as f:
+                    tabs[name[:-4]] = [row for row in csv.reader(f)]
         return cls(tabs)
 
     # --- gspread surface -------------------------------------------------

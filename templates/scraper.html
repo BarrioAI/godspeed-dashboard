@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Retail Scraper — Godspeed{% endblock %}
+
+{% block content %}
+<div class="container">
+
+  <div class="page-title">🔍 Retail Scraper</div>
+  <div class="page-sub">Find stores carrying Hellstar/Supreme that don't stock Godspeed yet</div>
+
+  <div class="two-col-grid">
+
+    <!-- SCRAPER CONTROL -->
+    <div>
+      <div class="card">
+        <div class="card-title"><span>⚡</span> Scraper Control</div>
+
+        <div style="margin-bottom: 20px;">
+          <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 200px; padding: 16px; background: var(--bg-surface); border-radius: 8px; border: 1px solid var(--border);">
+              <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">Status</div>
+              <div id="scraper-status-badge" style="font-size: 14px; font-weight: 600; color: var(--gold);">
+                {% if state.running %}
+                <span class="progress-ring">⟳</span> Running...
+                {% elif state.status == 'complete' %}
+                ✅ Complete
+                {% else %}
+                ⏸ Idle
+                {% endif %}
+              </div>
+            </div>
+            <div style="flex: 1; min-width: 200px; padding: 16px; background: var(--bg-surface); border-radius: 8px; border: 1px solid var(--border);">
+              <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">Last Run</div>
+              <div style="font-size: 14px; font-weight: 600; color: var(--white);">
+                {{ state.last_run or 'Never' }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <button id="scraper-btn" class="btn btn-primary" onclick="startScraper()" style="width: 100%; padding: 14px; font-size: 15px;" {% if state.running %}disabled{% endif %}>
+          {% if state.running %}
+          <span class="progress-ring">⟳</span> Running...
+          {% else %}
+          ▶ Run Scraper
+          {% endif %}
+        </button>
+
+        <div style="margin-top: 16px; padding: 14px; background: var(--bg-surface); border-radius: 8px; font-size: 12px; color: var(--text-muted);">
+          <strong style="color: var(--white);">What the scraper does:</strong><br>
+          <div style="margin-top: 8px; line-height: 1.8;">
+            1. 🔍 Searches for stores carrying Hellstar, Supreme, SP5DER<br>
+            2. 🔄 Cross-references against current Godspeed retailers<br>
+            3. 📍 Filters by US markets<br>
+            4. 💾 Saves new leads to Google Sheets<br>
+            5. 📊 Reports results summary
+          </div>
+        </div>
+      </div>
+
+      <!-- HOW TO CONNECT LIVE DATA -->
+      <div class="card">
+        <div class="card-title"><span>🔌</span> Live Data Sources</div>
+        <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.8;">
+          <p style="margin-bottom: 12px;">To connect real scraping data sources, integrate with:</p>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <div style="padding: 10px; background: var(--bg-surface); border-radius: 6px;">
+              📷 <strong>Instagram API</strong> — scrape store tags and location posts
+            </div>
+            <div style="padding: 10px; background: var(--bg-surface); border-radius: 6px;">
+              🗺️ <strong>Google Maps API</strong> — find local streetwear shops
+            </div>
+            <div style="padding: 10px; background: var(--bg-surface); border-radius: 6px;">
+              🏷️ <strong>Brand websites</strong> — scrape official stockist pages
+            </div>
+            <div style="padding: 10px; background: var(--bg-surface); border-radius: 6px;">
+              📊 <strong>Faire/JOOR wholesale</strong> — platform data
+            </div>
+          </div>
+          <p style="margin-top: 12px; color: var(--text-muted);">Contact Raj Patel to set up live integrations.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- TERMINAL + RESULTS -->
+    <div>
+      <div class="card">
+        <div class="card-title"><span>💻</span> Live Progress</div>
+        <div class="scraper-terminal" id="scraper-terminal">
+          <div class="terminal-line">
+            <span class="terminal-time" style="color: var(--gold-dim);">[system]</span>
+            <span class="terminal-msg" style="color: var(--text-muted);">Godspeed Retail Intelligence Engine — ready to run</span>
+          </div>
+          {% if state.progress %}
+          {% for line in state.progress %}
+          <div class="terminal-line">
+            <span class="terminal-time">[{{ line.time }}]</span>
+            <span class="terminal-msg">{{ line.message }}</span>
+          </div>
+          {% endfor %}
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- RESULTS CONTAINER -->
+      <div id="results-container">
+        {% if state.results %}
+        <div class="card-title" style="margin-top: 0;"><span>📊</span> Last Run Results</div>
+        <div class="results-grid">
+          <div class="result-card">
+            <div class="result-num">{{ state.results.stores_scanned }}</div>
+            <div class="result-label">Stores Scanned</div>
+          </div>
+          <div class="result-card">
+            <div class="result-num" style="color: #2ECC71;">{{ state.results.new_leads }}</div>
+            <div class="result-label">New Leads Found</div>
+          </div>
+          <div class="result-card">
+            <div class="result-num" style="color: #C9A84C;">{{ state.results.already_carrying }}</div>
+            <div class="result-label">Already Carrying Godspeed</div>
+          </div>
+          <div class="result-card">
+            <div class="result-num" style="color: #8A9BB8;">{{ state.results.skipped }}</div>
+            <div class="result-label">Skipped</div>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

@@ -185,16 +185,13 @@ async function reviewStore(btn, decision) {
   if (tr) tr.remove();
 }
 
-// ─── BACKGROUND JOBS (rebuild / verify) ───
+// ─── VERIFY JOB ───
 let jobTimer = null;
 let onJobDone = null;
 
-async function startJob(name, btn) {
-  if (name === 'rebuild' && document.getElementById('job-panel') && btn && btn.id !== 'build-btn') {
-    if (!confirm('Rebuild the clean database from the source tabs?')) return;
-  }
+async function startJob(btn) {
   if (btn) btn.disabled = true;
-  const data = await postJSON('/api/job/start', { job: name });
+  const data = await postJSON('/api/job/start', {});
   if (!data.success) {
     if (btn) btn.disabled = false;
     showToast(`❌ ${data.error}`, 'error');
@@ -226,7 +223,7 @@ async function pollJob() {
   document.getElementById('job-message').textContent = data.error ? `Failed: ${data.error}` : data.message;
   const fill = document.getElementById('job-bar-fill');
   fill.style.width = data.total ? `${Math.round((data.done / data.total) * 100)}%` : (data.running ? '8%' : '100%');
-  document.getElementById('job-stop').style.display = data.running && data.name === 'verify' ? '' : 'none';
+  document.getElementById('job-stop').style.display = data.running ? '' : 'none';
   if (!data.running) {
     clearInterval(jobTimer);
     jobTimer = null;
@@ -238,6 +235,12 @@ async function pollJob() {
       setTimeout(onJobDone, 1200);
     }
   }
+}
+
+// ─── SCRAPER (queued — runs outside the dashboard) ───
+async function startScraper() {
+  const data = await postJSON('/api/scraper/start');
+  showToast(data.message || data.error || 'Scrape queued', data.success ? 'success' : 'error');
 }
 
 // ─── INIT ───

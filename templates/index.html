@@ -20,10 +20,10 @@
       <div class="stat-value">{{ stats.qualified }}</div>
       <div class="stat-label">Qualified Leads</div>
     </a>
-    <a class="stat-card stat-link" href="/leads?tier=Hot">
+    <a class="stat-card stat-link" href="/leads?tier=A-Tier">
       <div class="stat-icon">🔥</div>
-      <div class="stat-value">{{ stats.hot }}</div>
-      <div class="stat-label">Hot Leads</div>
+      <div class="stat-value">{{ stats.top_tier }}</div>
+      <div class="stat-label">A-Tier Leads</div>
     </a>
     <a class="stat-card stat-link" href="/leads?view=review">
       <div class="stat-icon">🔎</div>
@@ -42,7 +42,7 @@
     </a>
     <a class="stat-card stat-link" href="/outreach">
       <div class="stat-icon">💬</div>
-      <div class="stat-value">{{ stats.replies_logged }}</div>
+      <div class="stat-value">{{ stats.replied }}</div>
       <div class="stat-label">Replies</div>
     </a>
   </div>
@@ -156,7 +156,7 @@
       <!-- PIPELINE -->
       <div class="card">
         <div class="card-title"><span>📊</span> Pipeline</div>
-        {% for label, value in [('Qualified leads', stats.qualified), ('Pitched', stats.pitched), ('Replied', stats.replied), ('Converted', stats.converted)] %}
+        {% for label, value in [('Qualified leads', stats.qualified), ('Pitched', stats.pitched), ('In talks', stats.in_talks), ('Won', stats.converted)] %}
         <div class="meter">
           <div class="meter-head"><span>{{ label }}</span><span>{{ value }}</span></div>
           <div class="meter-track"><div class="meter-fill" style="width: {% if stats.qualified %}{{ [(value / stats.qualified * 100)|int, 100]|min }}{% else %}0{% endif %}%;"></div></div>
@@ -171,6 +171,7 @@
           <a href="/leads" class="btn btn-primary">🎯 View Qualified Leads</a>
           <a href="/leads?view=review" class="btn btn-outline">🔎 Review Uncertain Stores</a>
           <a href="/add-store" class="btn btn-outline">➕ Add Store Manually</a>
+          <a href="/orders" class="btn btn-outline">📦 Orders &amp; Commission</a>
           <a href="/export/leads.csv" class="btn btn-outline">⬇ Download Qualified Leads (CSV)</a>
         </div>
       </div>

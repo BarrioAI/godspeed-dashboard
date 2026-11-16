@@ -6,14 +6,12 @@ searched for the Instagram profile it links to, the phone numbers it shows and
 the brands it mentions. That answers "is this the right Instagram / phone?"
 far more reliably than asking Instagram, which blocks most automated requests.
 
-Outcomes written to the MASTER DATABASE:
-    Web Status    ok | unreachable | (format-only statuses when not checked)
-    IG Status     ok (on website) | mismatch | ok | not-found | unverified
-    Phone Status  ok (on website) | format-ok | invalid-format | empty
-    Suggested Fixes   what the website says when it disagrees with the row
-
-Blank Instagram / phone / email cells are filled from the website; existing
-values are never overwritten — a disagreement becomes a suggestion.
+Findings (stored in the VERIFICATION tab, never written into STORES):
+    web_status    ok | unreachable | (format-only statuses when not checked)
+    ig_status     ok (on website) | mismatch | ok | not-found | unverified
+    phone_status  ok (on website) | format-ok | invalid-format | empty
+    found_*       what the website shows where the sheet is blank
+    suggested_fixes   where the website disagrees with the sheet
 """
 
 from __future__ import annotations
@@ -134,8 +132,16 @@ def check_instagram(handle: str, session: requests.Session) -> str:
 
 
 def verify_record(rec: dict, session: requests.Session, check_ig: bool = True) -> dict:
-    """Returns the columns to change on this record (possibly empty)."""
-    changes: dict = {}
+    """
+    Check one store. Returns findings; the store's row is not modified.
+
+        web_status / ig_status / phone_status
+        found_instagram / found_phone / found_email   what the site shows for a blank field
+        site_mentions      brands / keywords seen on the site (evidence of fit)
+        suggested_fixes    where the site disagrees with the sheet
+    """
+    out = {"web_status": "", "ig_status": "", "phone_status": "", "found_instagram": "",
+           "found_phone": "", "found_email": "", "site_mentions": "", "suggested_fixes": ""}
     suggestions: list[str] = []
     handle = q.normalize_instagram(rec.get("Instagram"))
     phone = q.normalize_phone(rec.get("Phone"))
@@ -144,60 +150,56 @@ def verify_record(rec: dict, session: requests.Session, check_ig: bool = True) -
     web_fmt = q.website_status(rec.get("Website"))
     if web_fmt == "format-ok":
         site = fetch_site(q.normalize_website(rec["Website"]), session)
-        changes["Web Status"] = site["status"]
+        out["web_status"] = site["status"]
     else:
-        changes["Web Status"] = web_fmt
+        out["web_status"] = web_fmt
+    live = bool(site and site["status"] == "ok")
 
     # Instagram
-    if site and site["status"] == "ok" and site["handles"]:
+    if live and site["handles"]:
         if handle and handle in site["handles"]:
-            changes["IG Status"] = "ok (on website)"
+            out["ig_status"] = "ok (on website)"
         elif handle:
-            changes["IG Status"] = "mismatch"
+            out["ig_status"] = "mismatch"
             suggestions.append(f"Instagram: website links @{site['handles'][0]}, sheet has @{handle}")
         elif len(site["handles"]) == 1:
-            changes["Instagram"] = "@" + site["handles"][0]
-            changes["IG Status"] = "ok (on website)"
-            handle = None
-    if "IG Status" not in changes:
+            out["found_instagram"] = "@" + site["handles"][0]
+            out["ig_status"] = "ok (on website)"
+    if not out["ig_status"]:
         if handle:
-            changes["IG Status"] = check_instagram(handle, session) if check_ig else "unverified"
+            out["ig_status"] = check_instagram(handle, session) if check_ig else "unverified"
         else:
-            changes["IG Status"] = q.instagram_status(rec.get("Instagram"))
+            out["ig_status"] = q.instagram_status(rec.get("Instagram"))
 
     # Phone
-    if site and site["status"] == "ok" and site["phones"]:
+    if live and site["phones"]:
         if phone and phone in site["phones"]:
-            changes["Phone Status"] = "ok (on website)"
+            out["phone_status"] = "ok (on website)"
         elif phone:
-            changes["Phone Status"] = "format-ok"
+            out["phone_status"] = "format-ok"
             suggestions.append(f"Phone: website shows {q.format_phone(site['phones'][0])}, "
                                f"sheet has {q.format_phone(phone)}")
         elif not q.s(rec.get("Phone")) and len(site["phones"]) == 1:
-            changes["Phone"] = q.format_phone(site["phones"][0])
-            changes["Phone Status"] = "ok (on website)"
-    if "Phone Status" not in changes:
-        changes["Phone Status"] = q.phone_status(rec.get("Phone"))
+            out["found_phone"] = q.format_phone(site["phones"][0])
+            out["phone_status"] = "ok (on website)"
+    if not out["phone_status"]:
+        out["phone_status"] = q.phone_status(rec.get("Phone"))
 
-    # Email + fit evidence
-    if site and site["status"] == "ok":
+    if live:
         if not q.s(rec.get("Email")) and site["emails"]:
-            changes["Email"] = site["emails"][0]
-        notes = q.s(rec.get("Notes"))
-        if site["evidence"] and "Site mentions:" not in notes:
-            changes["Notes"] = (notes + " · " if notes else "") + "Site mentions: " + ", ".join(site["evidence"])
+            out["found_email"] = site["emails"][0]
+        out["site_mentions"] = ", ".join(site["evidence"])
     if site and site["status"] == "unreachable":
         suggestions.append("Website did not load — check the URL")
-
-    changes["Suggested Fixes"] = "; ".join(suggestions)
-    return {k: v for k, v in changes.items() if q.s(rec.get(k)) != q.s(v)}
+    out["suggested_fixes"] = "; ".join(suggestions)
+    return out
 
 
 def verify_all(records: list[dict],
                progress: Optional[Callable[[int, int], None]] = None,
                should_stop: Optional[Callable[[], bool]] = None,
                check_ig: bool = True) -> dict[int, dict]:
-    """Verify many records in parallel. Returns {index: changes}."""
+    """Verify many records in parallel. Returns {index: findings}."""
     session = requests.Session()
     adapter = requests.adapters.HTTPAdapter(pool_connections=WEB_WORKERS, pool_maxsize=WEB_WORKERS)
     session.mount("https://", adapter)

@@ -1,68 +1,65 @@
-"""End-to-end tests: cleaning rules, the build pipeline, the dashboard, live verification."""
+"""End-to-end tests: quality rules, the STORES quality layer, the dashboard, live verification."""
 
+import base64
 import http.server
 import threading
 
 import pytest
 
 import app as dashboard
-import pipeline
 import quality as q
 import sheets
+import stores
 import verify
 from fake_sheets import FakeSpreadsheet
 
-ACQ = [
-    ["Store Name", "City", "State", "Country", "Territory", "Instagram", "Email", "Phone", "Website",
-     "Warm Lead", "Outreach Status", "Date Added"],
-    ["Sole Supremacy", "San Jose", "CA", "USA", "West", "@solesupremacy", "", "(408) 800-4950",
-     "https://solesupremacy.com", "No", "Not Contacted", "2026-04-21"],
-    ["Hollister Co. at Woodland Hills Mall - Tulsa - Simon", "Tulsa", "OK", "USA", "Southwest",
-     "@hollister", "", "", "", "No", "Not Contacted", "2026-04-21"],
-    ["Home Supreme Marine Inc. Fort Lauderdale", "Fort Lauderdale", "FL", "USA", "Southeast",
-     "@suprememarineinc", "jquery.maskedinput@1.4.1", "(954) 797-1818", "https://suprememarineinc.com",
-     "No", "Not Contacted", "2026-04-21"],
-    ["Best Sneaker Stores in Miami", "Miami", "FL", "USA", "Southeast", "@designscene", "", "",
-     "https://designscene.net/2025/01/best-sneaker-stores-miami.html", "No", "Not Contacted", "2026-04-21"],
+STORES_HEADERS = ["store_name", "city", "market", "country", "website", "instagram", "email", "phone",
+                  "pipeline_stage", "account_status", "last_order_date", "notes", "lead_score",
+                  "priority_tier", "score_breakdown"]
+
+
+def _store(name, city, market, website="", instagram="", email="", phone="", stage="Not Contacted",
+           account="", notes="", score="30", tier="C-Tier"):
+    return [name, city, market, "USA", website, instagram, email, phone, stage, account, "", notes,
+            score, tier, ""]
+
+
+STORES = [
+    STORES_HEADERS,
+    _store("Sole Supremacy", "San Jose", "CA", "https://solesupremacy.com/?srsltid=x", "@solesupremacy",
+           "", "(408) 800-4950", score="72", tier="A-Tier"),
+    _store("HYP Miami", "Miami (Brickell)", "FL", "hypmiami.com", "@hypmiami", stage="New Lead",
+           notes="Premium streetwear - Chrome Hearts/Fear of God", score="60", tier="B-Tier"),
+    _store("Wasteland SF", "San Francisco", "California", "https://shopwasteland.com", "@shopwasteland"),
+    _store("R H U D E", "Miami", "Florida", "https://rh-ude.com/", "@rhude", "", "1613580349"),
+    _store("Supreme Sets Up Shop in Miami", "Miami", "Florida",
+           "https://hypebeast.com/2025/4/supreme-miami-store-opening-info", "@hypebeast",
+           "app-store-en@2x.png", "3702846231", score="80", tier="A-Tier"),
+    _store("LUXE MIAMI (@luxe.mia) · Coral Gables, FL", "Coral Gables", "Florida",
+           "https://www.instagram.com/luxe.mia/?hl=en", "@font", "", "1037486289"),
+    _store("Shop Hellstar clothing | The Attic Streetwear", "Austin", "Texas",
+           "https://www.theatticstreetwear.com/hellstar", "@theatticstreetwear", "", "1037486289", score="50"),
+    _store("Shop Hellstar clothing | The Attic Streetwear", "Dallas", "Texas",
+           "https://www.theatticstreetwear.com/hellstar", "@theatticstreetwear", "", "1037486289", score="40"),
+    _store("Riverbend Marketplace - Ft Lauderdale", "Fort Lauderdale", "Florida",
+           "https://locations.dtlr.com/fl/ftlauderdale/riverbend-marketplace.html", "@dtlrofficial",
+           "custserv@dtlr.com", "1037486289"),
+    _store("House of Drip", "Detroit", "Michigan", "https://houseofdripmi.com/", "@layer",
+           "john.doe@email.com", "1037486289"),
+    _store("Broken Chains", "Medellín", "Colombia", "", "@brokenchains", "", "", stage="Won",
+           account="Active", notes="Live account"),
+    _store("HELLSTAR - Backdoor Miami", "Miami", "Florida", "https://backdoormia.com/collections/vendors",
+           "@100", "", "1750677234"),
 ]
-# Old master tab: curated layout (status sits under 'Carries Godspeed') + scraped layout.
-BACKUP = [
-    ["Store Name", "City", "State", "Country", "Website", "Instagram", "Email", "Phone", "Carries Supreme",
-     "Carries Hellstar", "Carries Godspeed", "Last Order Date", "Outreach Status", "Outreach Channel",
-     "Notes", "Date Added", "Lead Score", "Priority Tier", "", ""],
-    ["HYP Miami", "Miami (Brickell)", "FL", "", "https://hypmiami.com", "@hypmiami", "No", "No", "No", "",
-     "New Lead", "Premium streetwear Brickell - Chrome Hearts/Fear of God"],
-    ["Duval Kickz", "Jacksonville", "FL", "", "https://duvalkickz.com", "@duvalkickz", "Yes", "Yes", "Yes",
-     "", "Not Contacted", "CONFIRMED carries Godspeed + Hellstar."],
-    ["Store Name", "City", "State", "Instagram", "https://Website", "Phone"],          # stray header row
-    ["R H U D E", "Miami", "Florida", "USA", "https://rh-ude.com/?srsltid=abc", "@rhude", "", "1613580349",
-     "", "", "2026-04-16"],
-    ["Supreme Sets Up Shop in Miami", "Miami", "Florida", "USA",
-     "https://hypebeast.com/2025/4/supreme-miami-store-opening-info", "@hypebeast", "app-store-en@2x.png",
-     "3702846231", "", "", "2026-04-16"],
-    ["LUXE MIAMI (@luxe.mia) · Coral Gables, FL", "Coral Gables", "Florida", "USA",
-     "https://www.instagram.com/luxe.mia/?hl=en", "@font", "", "1037483433", "", "", "2026-04-16"],
-    ["Shop Hellstar clothing", "Austin", "Texas", "USA", "https://www.theatticstreetwear.com/hellstar",
-     "@theatticstreetwear", "", "1037486289", "", "", "2026-04-16"],
-    ["Shop Hellstar clothing", "Dallas", "Texas", "USA", "https://www.theatticstreetwear.com/hellstar",
-     "@theatticstreetwear", "", "1037486289", "", "", "2026-04-16"],
-    ["Sole Supremacy | Sneaker Boutique San Jose", "San Jose", "California", "USA",
-     "https://solesupremacy.com/?srsltid=x", "", "info@solesupremacy.com", "1037486289", "", "", "2026-04-16"],
-]
-CITY = [
-    ["Store Name", "City", "State", "Website", "Instagram", "Email", "Phone", "Outreach Status", "Date Added"],
-    ["La Esencia Boutique", "Santo Domingo", "Dominican Republic", "", "@la.esencia.boutique", "", "#ERROR!",
-     "Active Customer", "2026-04-20"],
-    ["Wasteland SF", "San Francisco", "CA", "https://shopwasteland.com", "@shopwasteland", "", "", "", ""],
-]
-OUTREACH = [sheets.OUTREACH_HEADERS]
+STORES[11][3] = "Colombia"
 
 
 def workbook():
     return FakeSpreadsheet({
-        "MASTER DATABASE (backup)": BACKUP, "ACQUISITION LEADS": ACQ, "DR - Dominican Republic": CITY,
-        "OUTREACH LOG": OUTREACH, "Scraper Log": [["Run Date", "Stores Found"]],
-        "ORDERS": [["order_id", "store_name"], ["GS-001", "La Esencia Boutique"]],
+        "STORES": STORES, "OUTREACH_LOG": [dashboard.OUTREACH_HEADERS],
+        "ORDERS": [["order_id", "store_name", "order_date", "order_total", "commission_amount",
+                    "commission_status"],
+                   ["ORD-0001", "Broken Chains", "2026-05-01", "5210", "521", "Pending"]],
     })
 
 
@@ -70,8 +67,7 @@ def workbook():
 def ss():
     book = workbook()
     sheets.use_spreadsheet(book)
-    dashboard.invalidate()
-    dashboard._cache.update(records=None, outreach=None)
+    dashboard._cache.update(at=0.0, data=None)
     return book
 
 
@@ -81,9 +77,8 @@ def client(ss):
     return dashboard.app.test_client()
 
 
-def built():
-    records, stats = pipeline.build_master(workbook().tabs)
-    return {r["Store Name"]: r for r in records}, stats
+def by_name():
+    return {s["Store Name"]: s for s in dashboard.load_data(force=True)["stores"]}
 
 
 # ── quality rules ────────────────────────────────────────────────────────────
@@ -150,130 +145,140 @@ def test_email_junk():
         assert q.normalize_email(junk) is None
 
 
-# ── pipeline ─────────────────────────────────────────────────────────────────
+# ── quality layer over STORES ────────────────────────────────────────────────
 
-def test_build_merges_and_cleans():
-    stores, stats = built()
-    assert stats["source_tabs"] == 3                       # logs / orders tabs are ignored
+def test_junk_contact_values_are_hidden_not_deleted(client, ss):
+    before = [list(r) for r in ss.tabs["STORES"]]
+    rows = by_name()
 
-    sole = stores["Sole Supremacy"]                        # ACQ row + scraped page-title row merged
-    assert sole["Phone"] == "(408) 800-4950"               # the fake 1037486289 never wins
-    assert sole["Email"] == "info@solesupremacy.com"       # blank filled from the other tab
-    assert sole["Cleanup Flag"] == "OK" and sole["State"] == "CA"
-    assert "ACQUISITION LEADS" in sole["Sources"] and "MASTER DATABASE (backup)" in sole["Sources"]
+    sole = rows["Sole Supremacy"]
+    assert sole["Phone"] == "(408) 800-4950" and sole["_bucket"] == "qualified"
+    assert sole["Website"] == "https://solesupremacy.com/" and sole["State"] == "CA"
 
-    hyp = stores["HYP Miami"]                              # legacy curated layout is un-shifted
-    assert hyp["Outreach Status"] == "New Lead" and hyp["Email"] == "" and hyp["Phone"] == ""
-    assert "Chrome Hearts" in hyp["Notes"] and hyp["Cleanup Flag"] == "OK"
-
-    assert stores["Duval Kickz"]["Carries Godspeed"] == "Yes"
-    assert stores["La Esencia Boutique"]["Carries Godspeed"] == "Yes"
-    assert stores["La Esencia Boutique"]["Phone"] == ""    # '#ERROR!' dropped
-
-    luxe = stores["LUXE MIAMI"]                            # Instagram page title -> store + handle
+    luxe = rows["LUXE MIAMI"]                              # Instagram page title -> store + handle
     assert luxe["Instagram"] == "@luxe.mia" and luxe["Website"] == "" and luxe["Phone"] == ""
+    assert luxe["_name"].startswith("LUXE MIAMI (@luxe.mia)")
 
-    assert "Store Name" not in stores                      # stray header row skipped
-    attic = [r for n, r in stores.items() if "theatticstreetwear" in r["Website"]]
-    assert len(attic) == 1                                 # one site searched in two cities = one store
+    drip = rows["House of Drip"]
+    assert (drip["Instagram"], drip["Email"], drip["Phone"]) == ("", "", "")
+    assert any("fake phone" in note for note in drip["_cleaning"])
 
-
-def test_dates_as_sheets_displays_them():
-    assert pipeline.clean_date("4/16/2026") == "2026-04-16"
-    assert pipeline.clean_date("2026-04-16 00:00:00") == "2026-04-16"
-    assert pipeline.clean_date("Sneaker boutique in Orlando") == ""
-    rec = {f: "" for f in pipeline.HEADER_ALIASES}
-    rec.update(name="R H U D E", carries_godspeed="4/16/2026")
-    pipeline._unshift_legacy_master(rec)                   # scraped layout: date sits under 'Carries Godspeed'
-    assert rec["date_added"] == "4/16/2026" and rec["carries_godspeed"] == ""
+    assert rows["HYP Miami"]["Website"] == "https://hypmiami.com"
+    assert rows["Wasteland SF"]["State"] == "CA"
+    assert ss.tabs["STORES"] == before                     # the sheet itself is untouched
+    assert not any(c.startswith(("update", "append", "clear", "add")) for c in ss.calls)
 
 
-def test_build_flags_junk():
-    stores, _ = built()
-    assert "mono-brand" in stores["R H U D E"]["Cleanup Flag"]
-    assert "not-a-store" in stores["Supreme Sets Up Shop in Miami"]["Cleanup Flag"]
-    assert "not-a-store" in stores["Best Sneaker Stores in Miami"]["Cleanup Flag"]
-    assert "chain" in next(r for n, r in stores.items() if n.startswith("Hollister"))["Cleanup Flag"]
-    marine = next(r for n, r in stores.items() if "Marine" in n)
-    assert marine["Email"] == "" and marine["Cleanup Flag"] == "low-fit"
-    assert stores["R H U D E"]["Website"] == "https://rh-ude.com/"     # tracking parameter stripped
-
-
-def test_source_tabs_untouched_and_rebuild_keeps_edits(client, ss):
-    before = {k: [list(r) for r in v] for k, v in ss.tabs.items()}
-    dashboard.rebuild_master()
-    assert {k: v for k, v in ss.tabs.items() if k != "MASTER DATABASE"} == before
-
-    rows = {r["Store Name"]: r for r in dashboard.load_master(force=True)[0]}
-    sole, waste = rows["Sole Supremacy"], rows["Wasteland SF"]
-    assert waste["_bucket"] == "review"
-    assert client.post("/api/send-pitch", json={"row": sole["_row"], "store_name": "Sole Supremacy",
-                                                "channel": "Email"}).json["success"]
-    assert client.post("/api/review", json={"row": waste["_row"], "store_name": "Wasteland SF",
-                                            "decision": "approve"}).json["bucket"] == "qualified"
-    first = dashboard.rebuild_master()
-    second = dashboard.rebuild_master()
-    assert first["unique_stores"] == second["unique_stores"]
-    rows = {r["Store Name"]: r for r in dashboard.load_master(force=True)[0]}
-    assert rows["Sole Supremacy"]["Outreach Status"] == "Pitched"
-    assert rows["Sole Supremacy"]["Outreach Channel"] == "Email"
-    assert rows["Wasteland SF"]["_bucket"] == "qualified"
+def test_flags_and_buckets(client):
+    rows = by_name()
+    assert rows["HYP Miami"]["_bucket"] == "qualified"
+    assert rows["Wasteland SF"]["_bucket"] == "review"
+    assert "mono-brand" in rows["R H U D E"]["Cleanup Flag"]
+    assert "not-a-store" in rows["Supreme Sets Up Shop in Miami"]["Cleanup Flag"]
+    assert "chain" in rows["Riverbend Marketplace - Ft Lauderdale"]["Cleanup Flag"]
+    assert "excluded" in rows["Backdoor Miami"]["Cleanup Flag"]
+    attic = [s for s in dashboard.load_data()["stores"] if s["Store Name"] == "The Attic Streetwear"]
+    assert sorted(s["_bucket"] for s in attic) == ["qualified", "rejected"]   # one store, listed twice
+    dup = next(s for s in attic if s["_bucket"] == "rejected")
+    assert dup["City"] == "Dallas" and "duplicate" in dup["Cleanup Flag"]     # the better-scored row stays
 
 
 # ── dashboard ────────────────────────────────────────────────────────────────
 
-def test_setup_page_before_build(client):
-    page = client.get("/")
-    assert page.status_code == 200 and b"Build clean database" in page.data
-    assert client.get("/api/stats").json == {"setup_required": True}
-    assert client.post("/api/send-pitch", json={"store_name": "x"}).status_code == 503
-
-
 def test_pages_render(client):
-    dashboard.rebuild_master()
     for path in ("/", "/leads", "/leads?view=review", "/leads?view=rejected&q=rhude", "/leads?view=all&page=9",
-                 "/leads?contact=problem&tier=Hot&state=FL&status=pitched", "/retailers", "/outreach",
-                 "/quality", "/add-store", "/export/leads.csv", "/healthz"):
+                 "/leads?contact=problem&tier=A-Tier&state=FL&status=pitched", "/retailers", "/outreach",
+                 "/orders", "/quality", "/add-store", "/scraper", "/export/leads.csv", "/healthz"):
         assert client.get(path).status_code == 200, path
     leads = client.get("/leads").data.decode()
-    assert "Sole Supremacy" in leads and "R H U D E" not in leads and "Hollister" not in leads
-    assert "Duval Kickz" in client.get("/retailers").data.decode()
+    assert "Sole Supremacy" in leads and "R H U D E" not in leads and "Riverbend" not in leads
+    assert "Broken Chains" not in leads                    # customers live on Retailers
+    assert "Broken Chains" in client.get("/retailers").data.decode()
+    assert "$5,210" in client.get("/orders").data.decode()
     stats = client.get("/api/stats").json
-    assert stats["retailers"] == 2 and stats["qualified"] + stats["review"] + stats["rejected"] == stats["total"]
+    assert stats["retailers"] == 1 and stats["total"] == 12 and stats["leads"] == 11
+    assert stats["qualified"] + stats["review"] + stats["rejected"] == stats["leads"]
 
 
-def test_pitch_logs_without_touching_existing_log(client, ss):
-    ss.tabs["OUTREACH LOG"].append(["Old Store", "X", "Y", "Email", "hi", "2026-01-01 10:00", "", "", "Sent", "Goldie"])
-    ss.tabs["OUTREACH LOG"][0].append("My Extra Column")     # a hand-added column must not wipe the log
-    dashboard.rebuild_master()
-    sole = next(r for r in dashboard.load_master(force=True)[0] if r["Store Name"] == "Sole Supremacy")
-    res = client.post("/api/bulk-pitch", json={"stores": [{"row": sole["_row"], "name": "Sole Supremacy"}]})
-    assert res.json["count"] == 1
-    log = ss.tabs["OUTREACH LOG"]
-    assert log[1][0] == "Old Store" and log[-1][0] == "Sole Supremacy" and log[-1][8] == "Sent"
+def test_sheets_error_is_shown_not_raised(client, monkeypatch):
+    def boom():
+        raise RuntimeError("invalid_grant: Token has been expired or revoked.")
+    monkeypatch.setattr(sheets, "open_spreadsheet", boom)
+    page = client.get("/")
+    assert page.status_code == 200 and b"invalid_grant" in page.data
+    assert client.get("/leads").status_code == 200
+    assert client.post("/api/send-pitch", json={"store_name": "Sole Supremacy"}).status_code == 503
+
+
+def test_pitch_logs_event_and_moves_stage(client, ss):
+    sole = by_name()["Sole Supremacy"]
+    res = client.post("/api/send-pitch", json={"row": sole["_row"], "store_name": "Sole Supremacy",
+                                               "channel": "Email", "message": "hi"})
+    assert res.json["success"]
+    log = ss.tabs["OUTREACH_LOG"]
+    entry = dict(zip(log[0], log[-1]))
+    assert (entry["outreach_id"], entry["store_name"], entry["status"], entry["direction"]) == \
+        ("OUT-00001", "Sole Supremacy", "Sent", "Outbound")
+    assert ss.tabs["STORES"][sole["_row"] - 1][STORES_HEADERS.index("pipeline_stage")] == "Contacted"
+    assert by_name()["Sole Supremacy"]["Outreach Status"] == "Pitched"
+
+    # a draft is logged but does not move the stage; the v2 name-only payload still works
+    hyp = by_name()["HYP Miami"]
+    assert client.post("/api/send-pitch", json={"store_name": "HYP Miami", "status": "Drafted"}).json["success"]
+    assert ss.tabs["STORES"][hyp["_row"] - 1][STORES_HEADERS.index("pipeline_stage")] == "New Lead"
+    assert ss.tabs["OUTREACH_LOG"][-1][0] == "OUT-00002"
     assert client.post("/api/send-pitch", json={"row": 2, "store_name": "Wrong Name"}).status_code == 404
 
 
-def test_add_store_lands_in_master(client, ss):
-    dashboard.rebuild_master()
+def test_bulk_pitch_uses_sheet_names(client, ss):
+    luxe = by_name()["LUXE MIAMI"]
+    res = client.post("/api/bulk-pitch", json={"stores": [{"row": luxe["_row"], "name": "LUXE MIAMI"}]})
+    assert res.json["count"] == 1
+    assert ss.tabs["OUTREACH_LOG"][-1][2] == "LUXE MIAMI (@luxe.mia) · Coral Gables, FL"
+
+
+def test_review_decisions_survive_a_stores_resync(client, ss):
+    waste = by_name()["Wasteland SF"]
+    assert client.post("/api/review", json={"row": waste["_row"], "store_name": "Wasteland SF",
+                                            "decision": "approve"}).json["bucket"] == "qualified"
+    sole = by_name()["Sole Supremacy"]
+    client.post("/api/review", json={"row": sole["_row"], "store_name": "Sole Supremacy", "decision": "reject"})
+    assert ss.tabs["REVIEW"][0] == sheets.REVIEW_HEADERS and len(ss.tabs["REVIEW"]) == 3
+
+    ss.tabs["STORES"][1:] = reversed(ss.tabs["STORES"][1:])    # sync_to_sheets rewrites STORES
+    rows = by_name()
+    assert rows["Wasteland SF"]["_bucket"] == "qualified" and rows["Sole Supremacy"]["_bucket"] == "rejected"
+
+    sole = rows["Sole Supremacy"]
+    client.post("/api/review", json={"row": sole["_row"], "store_name": "Sole Supremacy", "decision": "clear"})
+    assert by_name()["Sole Supremacy"]["_bucket"] == "qualified"
+
+
+def test_add_store_appends_to_stores(client, ss):
     res = client.post("/add-store", data={"name": "Test Kicks", "city": "Newark", "state": "New Jersey",
                                           "instagram": "https://instagram.com/TestKicks/",
                                           "phone": "973 482 1100", "website": "testkicks.com", "brands": "Hellstar"})
     assert res.status_code == 302
-    row = dict(zip(ss.tabs["MASTER DATABASE"][0], ss.tabs["MASTER DATABASE"][-1]))
-    assert (row["Instagram"], row["Phone"], row["Website"], row["State"]) == \
-        ("@testkicks", "(973) 482-1100", "https://testkicks.com", "NJ")
-    assert row["Cleanup Flag"] == "OK"
+    row = dict(zip(ss.tabs["STORES"][0], ss.tabs["STORES"][-1]))
+    assert (row["instagram"], row["phone"], row["website"], row["market"], row["pipeline_stage"]) == \
+        ("@testkicks", "(973) 482-1100", "https://testkicks.com", "NJ", "Qualified")
+    assert by_name()["Test Kicks"]["_bucket"] == "qualified"
 
 
 def test_password_gate(client, monkeypatch):
     monkeypatch.setattr(dashboard, "DASHBOARD_PASSWORD", "s3cret")
     assert client.get("/leads").status_code == 401
     assert client.get("/healthz").status_code == 200
-    import base64
     token = base64.b64encode(b"goldie:s3cret").decode()
-    assert client.get("/healthz", headers={"Authorization": "Basic " + token}).status_code == 200
     assert client.get("/", headers={"Authorization": "Basic " + token}).status_code == 200
+
+
+def test_local_csv_dir_mode(tmp_path):
+    import csv
+    with open(tmp_path / "STORES.csv", "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerows(STORES)
+    book = FakeSpreadsheet.from_csv_dir(str(tmp_path))
+    assert book.tabs["STORES"][1][0] == "Sole Supremacy"
 
 
 # ── live verification (against a local web server) ───────────────────────────
@@ -284,7 +289,7 @@ PAGES = {
     "/other": '<a href="https://instagram.com/realhandle">IG</a> Call us at (212) 334-9000 today',
     "/blank": "<html><body>Welcome</body></html>",
     "/waste": '<a href="https://www.instagram.com/shopwasteland/">IG</a> <a href="mailto:hi@shopwasteland.com">'
-              'mail</a> Vintage and streetwear: Supreme, Stussy, Hellstar.',
+              'mail</a> Call (415) 863-3150. Vintage and streetwear: Supreme, Stussy, Hellstar.',
 }
 
 
@@ -307,6 +312,7 @@ def site(monkeypatch):
     monkeypatch.setattr(verify, "check_instagram", lambda handle, session: "unverified")
     monkeypatch.setattr(q, "normalize_website", lambda raw: q.s(raw) or None)
     monkeypatch.setattr(q, "website_status", lambda raw: "format-ok" if q.s(raw) else "empty")
+    monkeypatch.setattr(q, "CHAIN_LOCATION_THRESHOLD", 999)   # every test store shares 127.0.0.1
     yield f"http://127.0.0.1:{server.server_port}"
     server.shutdown()
 
@@ -317,72 +323,69 @@ def _verify(rec):
 
 
 def test_verify_confirms_matching_contact_info(site):
-    changes = _verify({"Website": site + "/good", "Instagram": "@solesupremacy", "Phone": "(408) 800-4950",
-                       "Email": "", "Notes": ""})
-    assert changes["Web Status"] == "ok"
-    assert changes["IG Status"] == "ok (on website)" and changes["Phone Status"] == "ok (on website)"
-    assert changes["Email"] == "hello@solesupremacy.com"
-    assert "Hellstar" in changes["Notes"] and "Suggested Fixes" not in changes
+    found = _verify({"Website": site + "/good", "Instagram": "@solesupremacy", "Phone": "(408) 800-4950",
+                     "Email": ""})
+    assert found["web_status"] == "ok"
+    assert found["ig_status"] == "ok (on website)" and found["phone_status"] == "ok (on website)"
+    assert found["found_email"] == "hello@solesupremacy.com"
+    assert "Hellstar" in found["site_mentions"] and found["suggested_fixes"] == ""
 
 
-def test_verify_suggests_instead_of_overwriting(site):
-    changes = _verify({"Website": site + "/other", "Instagram": "@wronghandle", "Phone": "(408) 800-4950"})
-    assert changes["IG Status"] == "mismatch"
-    assert "Instagram" not in changes and "Phone" not in changes
-    assert "@realhandle" in changes["Suggested Fixes"] and "(212) 334-9000" in changes["Suggested Fixes"]
+def test_verify_reports_disagreement(site):
+    found = _verify({"Website": site + "/other", "Instagram": "@wronghandle", "Phone": "(408) 800-4950"})
+    assert found["ig_status"] == "mismatch"
+    assert found["found_instagram"] == "" and found["found_phone"] == ""
+    assert "@realhandle" in found["suggested_fixes"] and "(212) 334-9000" in found["suggested_fixes"]
 
 
-def test_verify_fills_blanks_and_flags_dead_sites(site):
-    filled = _verify({"Website": site + "/other", "Instagram": "", "Phone": ""})
-    assert filled["Instagram"] == "@realhandle" and filled["Phone"] == "(212) 334-9000"
+def test_verify_finds_blanks_and_dead_sites(site):
+    found = _verify({"Website": site + "/other", "Instagram": "", "Phone": ""})
+    assert found["found_instagram"] == "@realhandle" and found["found_phone"] == "(212) 334-9000"
     dead = _verify({"Website": site + "/missing", "Instagram": "@x_store", "Phone": ""})
-    assert dead["Web Status"] == "unreachable" and dead["IG Status"] == "unverified"
-    assert "did not load" in dead["Suggested Fixes"]
+    assert dead["web_status"] == "unreachable" and dead["ig_status"] == "unverified"
+    assert "did not load" in dead["suggested_fixes"]
     blank = _verify({"Website": site + "/blank", "Instagram": "@x_store", "Phone": "(408) 800-4950"})
-    assert blank["Web Status"] == "ok" and blank["IG Status"] == "unverified"
+    assert blank["web_status"] == "ok" and blank["ig_status"] == "unverified"
 
 
-def test_verify_job_saves_to_sheet_and_requalifies(client, ss, site):
-    dashboard.rebuild_master()
-    head = ss.tabs["MASTER DATABASE"][0]
-    waste = next(r for r in ss.tabs["MASTER DATABASE"][1:] if r[0] == "Wasteland SF")
-    waste[head.index("Website")] = site + "/waste"           # its site mentions Hellstar + streetwear
-    for row in ss.tabs["MASTER DATABASE"][1:]:               # every other site would be a real request
-        if row is not waste:
-            row[head.index("Website")] = site + "/blank" if row[head.index("Website")] else ""
-    dashboard.invalidate()
+def _point_sites(ss, site, mapping, default="/blank"):
+    col = STORES_HEADERS.index("website")
+    for row in ss.tabs["STORES"][1:]:
+        if row[col] and "instagram.com" not in row[col]:
+            row[col] = site + mapping.get(row[0], default)
 
-    result = dashboard.verify_master()
-    assert result["checked"] >= 3 and result["websites_ok"] >= 1
 
-    rows = {r["Store Name"]: r for r in dashboard.load_master(force=True)[0]}
-    assert rows["Wasteland SF"]["IG Status"] == "ok (on website)"
-    assert rows["Wasteland SF"]["Email"] == "hi@shopwasteland.com"
-    assert "Hellstar" in rows["Wasteland SF"]["Notes"]
-    assert rows["Wasteland SF"]["_bucket"] == "qualified"    # evidence from the site confirmed the fit
-    assert rows["R H U D E"]["Web Status"] != "ok"           # rejected rows are not checked
-    assert len(ss.tabs["MASTER DATABASE"][0]) == len(set(ss.tabs["MASTER DATABASE"][0]))
-    assert client.get("/quality").status_code == 200
+def test_verify_job_writes_only_the_verification_tab(client, ss, site):
+    _point_sites(ss, site, {"Wasteland SF": "/waste"})
+    stores_before = [list(r) for r in ss.tabs["STORES"]]
+
+    result = dashboard.verify_stores()
+    assert result["checked"] >= 4 and result["websites_ok"] >= 3
+    assert ss.tabs["STORES"] == stores_before
+    assert ss.tabs["VERIFICATION"][0] == sheets.VERIFY_HEADERS
+
+    waste = by_name()["Wasteland SF"]
+    assert waste["IG Status"] == "ok (on website)"
+    assert waste["Email"] == "hi@shopwasteland.com" and waste["Phone"] == "(415) 863-3150"
+    assert sorted(waste["_filled"]) == ["Email", "Phone"]
+    assert waste["_bucket"] == "qualified"                 # the site itself confirmed the fit
+    assert "Backdoor" not in " ".join(r[0] for r in ss.tabs["VERIFICATION"])    # rejected rows are skipped
+
+    # a second run keeps earlier results and does not treat found values as sheet values
+    again = dashboard.verify_stores()
+    assert again["checked"] == result["checked"]
+    assert len(ss.tabs["VERIFICATION"]) == result["checked"] + 1
+    assert sorted(by_name()["Wasteland SF"]["_filled"]) == ["Email", "Phone"]
+    assert client.get("/quality").status_code == 200 and client.get("/leads").status_code == 200
+
+    # once the sheet's value changes, the old check no longer applies
+    row = next(r for r in ss.tabs["STORES"] if r[0] == "Wasteland SF")
+    row[STORES_HEADERS.index("instagram")] = "@somethingelse"
+    assert by_name()["Wasteland SF"]["IG Status"] == "format-ok"
 
 
 def test_verify_job_refuses_to_save_a_network_outage(client, ss, site):
-    dashboard.rebuild_master()
-    head = ss.tabs["MASTER DATABASE"][0]
-    for row in ss.tabs["MASTER DATABASE"][1:]:
-        row[head.index("Website")] = site + "/missing"       # every site "down"
-    dashboard.invalidate()
-    snapshot = [list(r) for r in ss.tabs["MASTER DATABASE"]]
+    _point_sites(ss, site, {}, default="/missing")         # every site "down"
     with pytest.raises(RuntimeError, match="network problem"):
-        dashboard.verify_master()
-    assert ss.tabs["MASTER DATABASE"] == snapshot
-
-
-def test_backdoor_miami_is_held_out_and_not_a_retailer():
-    tabs = {"EXISTING RETAILERS": [
-        ["Store Name", "City", "State", "Website", "Instagram", "Email", "Phone", "First Order Date",
-         "Last Order Date", "Reorder Status", "Notes"],
-        ["HELLSTAR - Backdoor Miami", "Miami", "Florida", "https://backdoormia.com/collections/vendors?q=HELLSTAR",
-         "@100", "", "1750677234", "", "", "Check In", ""]]}
-    (rec,), _ = pipeline.build_master(tabs)
-    assert rec["Carries Godspeed"] == "" and rec["Outreach Status"] == "Not Contacted"
-    assert "excluded" in rec["Cleanup Flag"] and q.bucket(rec["Cleanup Flag"]) == "rejected"
+        dashboard.verify_stores()
+    assert "VERIFICATION" not in ss.tabs

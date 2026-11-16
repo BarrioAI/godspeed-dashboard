@@ -1,18 +1,22 @@
 """
-Godspeed Retail Intelligence System — Dashboard
+Godspeed Retail Intelligence System — Dashboard (v2)
+Clean 3-tab schema: STORES / OUTREACH_LOG / ORDERS.
 
-Data flow
----------
-  source tabs (ACQUISITION LEADS, STORES, city tabs, ...)      never modified
-        │   pipeline.build_master()  — merge, clean, classify
-        ▼
-  MASTER DATABASE tab                    the one tab this dashboard reads
-        │   verify.verify_all()      — live website / Instagram / phone checks
-        ▼
-  Leads / Retailers / Outreach / Data Quality pages
+Quality layer (read-side)
+-------------------------
+STORES is shown through stores.py / quality.py: junk contact values are hidden,
+every store gets a fit flag, and Leads is split into Qualified / Needs review /
+Rejected. Nothing in STORES is rewritten by this layer. Two small tabs hold what
+people and the verifier add, keyed by store name + city so they survive STORES
+being re-synced from the CSV:
 
-Pitches are *logged* to OUTREACH LOG and the store's Outreach Status is updated.
-The dashboard does not send DMs or emails itself.
+    REVIEW         a person's Approve / Reject decision (overrides the flag)
+    VERIFICATION   live website / Instagram / phone check results
+
+The only STORES cell the dashboard writes is pipeline_stage when a pitch is sent.
+
+Local dev: GODSPEED_LOCAL_DIR=/path/to/csvs (STORES.csv, OUTREACH_LOG.csv, ...)
+reads those files instead of Sheets; writes stay in memory.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ import csv
 import hmac
 import io
 import os
+import re
 import threading
 import time
 from datetime import datetime
@@ -28,28 +33,43 @@ from datetime import datetime
 from flask import Flask, Response, jsonify, redirect, render_template, request, url_for
 from flask_cors import CORS
 
-import pipeline
 import quality as q
 import sheets
-from pipeline import MASTER_HEADERS, MASTER_TAB
+import stores as store_rules
+from sheets import ORDERS_TAB, OUTREACH_TAB, REVIEW_TAB, STORES_TAB, VERIFY_TAB
 
 app = Flask(__name__)
 CORS(app)
 
 CACHE_TTL = 60          # seconds a sheet read is reused
 PAGE_SIZE = 50
+DEFAULT_COMMISSION = 0.10  # Goldie's 10%
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 
-OPEN_STATUSES = {"", "not contacted", "new lead"}
-RETAILER_STATUSES = {"converted", "active", "active customer"}
+# clean pipeline_stage  ->  badge word the templates style
+STAGE_TO_BADGE = {
+    "won": "Converted", "in talks": "Replied", "replied": "Replied",
+    "line_sheet_sent": "Replied", "contacted": "Pitched", "pitched": "Pitched",
+    "lost": "Declined", "disqualified": "Declined", "dormant_lead": "Declined",
+    "new": "Not Contacted", "qualified": "Not Contacted", "queued": "Not Contacted",
+    "new lead": "New Lead",
+}
+OPEN_BADGES = {"Not Contacted", "New Lead"}
+
+OUTREACH_HEADERS = [
+    "outreach_id", "store_id", "store_name", "channel", "direction", "template_used",
+    "message", "status", "sent_at", "sent_by", "reply_text", "reply_at", "sentiment", "notes",
+]
 
 
-# ─────────────────────────────────────────
-#  OPTIONAL PASSWORD  (set DASHBOARD_PASSWORD to enable)
-# ─────────────────────────────────────────
+def stage_badge(stage):
+    return STAGE_TO_BADGE.get((stage or "").strip().lower(), "Not Contacted")
 
+
+# ─────────────────────────────────────────  OPTIONAL PASSWORD
 @app.before_request
 def require_password():
+    """Set DASHBOARD_PASSWORD to put the site behind HTTP basic auth (any username)."""
     if not DASHBOARD_PASSWORD or request.path.startswith("/static/") or request.path == "/healthz":
         return None
     auth = request.authorization
@@ -63,246 +83,291 @@ def healthz():
     return "ok"
 
 
-# ─────────────────────────────────────────
-#  DATA LAYER
-# ─────────────────────────────────────────
-
-_cache = {"at": 0.0, "headers": None, "records": None, "outreach_at": 0.0, "outreach": None}
+# ─────────────────────────────────────────  DATA LAYER
+_cache = {"at": 0.0, "data": None}
 _cache_lock = threading.Lock()
 
 
 def invalidate():
     with _cache_lock:
         _cache["at"] = 0.0
-        _cache["outreach_at"] = 0.0
 
 
-def load_master(force: bool = False):
-    """
-    Returns (records, headers, error).
-    records is None when the MASTER DATABASE tab has not been built yet.
-    Each record is a dict of strings plus:
-        _row     1-based row number on the sheet
-        _bucket  qualified | review | rejected
-    """
-    with _cache_lock:
-        if not force and _cache["records"] is not None and time.time() - _cache["at"] < CACHE_TTL:
-            return _cache["records"], _cache["headers"], None
-    try:
-        ss = sheets.open_spreadsheet()
-        if MASTER_TAB not in sheets.tab_titles(ss):
-            return None, [], None
-        rows = sheets.read_tab(ss, MASTER_TAB)
-    except Exception as exc:                       # credentials, network, quota
-        return [], [], f"{type(exc).__name__}: {exc}"
+def _records(rows: list[list]) -> tuple[list[str], list[dict]]:
+    """Sheet values -> (headers, dicts). Every cell is a string; '_row' is the sheet row."""
     if not rows:
-        return None, [], None
-
+        return [], []
     headers = [q.s(h) for h in rows[0]]
-    records = []
+    out = []
     for n, raw in enumerate(rows[1:], start=2):
         rec = {h: q.s(raw[i]) if i < len(raw) else "" for i, h in enumerate(headers) if h}
-        if not rec.get("Store Name"):
-            continue
         rec["_row"] = n
+        out.append(rec)
+    return headers, out
+
+
+def store_key(name: str, city: str) -> tuple[str, str]:
+    return store_rules._key(name), store_rules._key(city)
+
+
+def is_customer(s):
+    """A store is a customer (Accounts engine) once Won / has an account_status."""
+    acc = (s.get("account_status", "") or "").strip().lower()
+    stage = (s.get("pipeline_stage", "") or "").strip().lower()
+    return acc in ("active", "dormant", "churned") or stage == "won"
+
+
+def _num(value) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _build_stores(rows, review_rows, verify_rows) -> tuple[list[str], list[dict]]:
+    headers, raw = _records(rows)
+    raw = [r for r in raw if r.get("store_name")]
+
+    decisions = {}
+    for d in _records(review_rows)[1]:                 # append-only log: the last decision wins
+        decisions[store_key(d.get("store_name", ""), d.get("city", ""))] = d.get("decision", "")
+    checks = {store_key(v.get("store_name", ""), v.get("city", "")): v for v in _records(verify_rows)[1]}
+
+    counts = store_rules.phone_counts(raw)
+    records = []
+    for row in raw:
+        rec = store_rules.clean_store(row, counts)
+        rec["_score"] = int(_num(row.get("lead_score")))
+        rec["Priority Tier"] = q.s(row.get("priority_tier"))
+        rec["Outreach Status"] = stage_badge(row.get("pipeline_stage"))
+        rec["_customer"] = is_customer(row)
+        rec["Carries Godspeed"] = "Yes" if rec["_customer"] else ""
+        rec["_filled"] = []
+        key = store_key(row["store_name"], row.get("city", ""))
+        rec["Review"] = decisions.get(key, "")
+
+        # Verification results apply only while the values they checked are unchanged.
+        check = checks.get(key)
+        if check and (check.get("website"), check.get("instagram"), check.get("phone")) == \
+                (rec["Website"], rec["Instagram"], rec["Phone"]):
+            rec["IG Status"] = check.get("ig_status", "")
+            rec["Web Status"] = check.get("web_status", "")
+            rec["Phone Status"] = check.get("phone_status", "")
+            rec["Suggested Fixes"] = check.get("suggested_fixes", "")
+            rec["_checked_at"] = check.get("checked_at", "")
+            for field, found in (("Instagram", "found_instagram"), ("Phone", "found_phone"),
+                                 ("Email", "found_email")):
+                if not rec[field] and check.get(found):
+                    rec[field] = check[found]          # shown, marked as "from website"
+                    rec["_filled"].append(field)
+            if check.get("site_mentions"):
+                rec["Notes"] = (rec["Notes"] + " · " if rec["Notes"] else "") + \
+                    "Site mentions: " + check["site_mentions"]
         records.append(rec)
 
-    # Rows typed straight into the sheet have no flag yet: classify them here.
-    missing = [r for r in records if not r.get("Cleanup Flag")]
-    if missing:
-        pipeline.annotate(missing)
+    store_rules.annotate(records)
     for rec in records:
-        rec["_bucket"] = q.bucket(rec.get("Cleanup Flag", ""), rec.get("Review", ""))
-        try:
-            rec["_score"] = int(float(rec.get("Lead Score") or 0))
-        except ValueError:
-            rec["_score"] = 0
+        rec["_bucket"] = q.bucket(rec["Cleanup Flag"], rec["Review"])
+    return headers, records
 
+
+def load_data(force: bool = False) -> dict:
+    """
+    One cached batch read of every tab the dashboard uses.
+    Returns {"stores", "store_headers", "outreach", "orders", "error"}.
+    """
     with _cache_lock:
-        _cache.update(at=time.time(), headers=headers, records=records)
-    return records, headers, None
-
-
-def load_outreach():
-    with _cache_lock:
-        if _cache["outreach"] is not None and time.time() - _cache["outreach_at"] < CACHE_TTL:
-            return _cache["outreach"], None
+        if not force and _cache["data"] is not None and time.time() - _cache["at"] < CACHE_TTL:
+            return _cache["data"]
     try:
         ss = sheets.open_spreadsheet()
-        if sheets.OUTREACH_TAB not in sheets.tab_titles(ss):
-            return [], None
-        rows = sheets.read_tab(ss, sheets.OUTREACH_TAB)
-    except Exception as exc:
-        return [], f"{type(exc).__name__}: {exc}"
-    log = []
-    if rows:
-        headers = [q.s(h) for h in rows[0]]
-        for raw in rows[1:]:
-            entry = {h: q.s(raw[i]) if i < len(raw) else "" for i, h in enumerate(headers) if h}
-            if entry.get("Store Name"):
-                log.append(entry)
+        tabs = sheets.read_tabs(ss, [STORES_TAB, OUTREACH_TAB, ORDERS_TAB, REVIEW_TAB, VERIFY_TAB])
+    except Exception as exc:                           # credentials, network, quota
+        return {"stores": [], "store_headers": [], "outreach": [], "orders": [],
+                "error": f"{type(exc).__name__}: {exc}"}
+
+    headers, records = _build_stores(tabs[STORES_TAB], tabs[REVIEW_TAB], tabs[VERIFY_TAB])
+    outreach = []
+    for o in _records(tabs[OUTREACH_TAB])[1]:
+        if not o.get("store_name"):
+            continue
+        o.update({"Store Name": o.get("store_name", ""), "Channel": o.get("channel", ""),
+                  "Message": o.get("message", ""), "Sent At": o.get("sent_at", ""),
+                  "Status": o.get("status", ""), "Response": o.get("reply_text", "")})
+        outreach.append(o)
+    orders = [o for o in _records(tabs[ORDERS_TAB])[1] if any(v for k, v in o.items() if k != "_row")]
+    data = {"stores": records, "store_headers": headers, "outreach": outreach, "orders": orders,
+            "error": None if tabs[STORES_TAB] else f"The {STORES_TAB} tab is empty or missing."}
     with _cache_lock:
-        _cache.update(outreach_at=time.time(), outreach=log)
-    return log, None
+        _cache.update(at=time.time(), data=data)
+    return data
 
 
-def is_retailer(rec: dict) -> bool:
-    return rec.get("Carries Godspeed", "").lower() == "yes" \
-        or rec.get("Outreach Status", "").lower() in RETAILER_STATUSES
+def get_stores():
+    data = load_data()
+    return data["stores"], data["error"]
 
 
-def compute_stats(records: list[dict], outreach: list[dict]) -> dict:
-    qualified = [r for r in records if r["_bucket"] == "qualified"]
+def compute_stats(stores: list[dict], outreach: list[dict]) -> dict:
+    customers = [s for s in stores if s["_customer"]]
+    prospects = [s for s in stores if not s["_customer"]]
+    qualified = [s for s in prospects if s["_bucket"] == "qualified"]
     n = len(qualified) or 1
 
-    def pct(count):
-        return round(count * 100 / n)
+    def have(field):
+        return sum(1 for s in qualified if s.get(field))
 
     def verified(field):
-        return sum(1 for r in qualified if r.get(field, "").startswith("ok"))
+        return sum(1 for s in qualified if s.get(field, "").startswith("ok"))
 
-    with_ig = sum(1 for r in qualified if r.get("Instagram"))
-    with_web = sum(1 for r in qualified if r.get("Website") and r.get("Web Status") != "social-link")
-    with_phone = sum(1 for r in qualified if r.get("Phone"))
-    with_email = sum(1 for r in qualified if r.get("Email"))
+    with_web = sum(1 for s in qualified if s["Website"] and s["Web Status"] != "social-link")
     return {
-        "total": len(records),
+        # v2 keys (kept for /api/stats consumers)
+        "total": len(stores), "leads": len(prospects), "retailers": len(customers),
+        "sent": sum(1 for o in outreach if o.get("direction", "Outbound") != "Inbound"),
+        "replied": sum(1 for o in outreach if o.get("Response", "").strip()),
+        "converted": sum(1 for s in stores if s.get("pipeline_stage", "").strip().lower() == "won"),
+        # quality layer
         "qualified": len(qualified),
-        "review": sum(1 for r in records if r["_bucket"] == "review"),
-        "rejected": sum(1 for r in records if r["_bucket"] == "rejected"),
-        "retailers": sum(1 for r in records if is_retailer(r)),
-        "pitched": sum(1 for r in records if r.get("Outreach Status", "").lower() == "pitched"),
-        "replied": sum(1 for r in records if r.get("Outreach Status", "").lower() == "replied"),
-        "converted": sum(1 for r in records if r.get("Outreach Status", "").lower() == "converted"),
-        "sent": len(outreach),
-        "replies_logged": sum(1 for o in outreach if o.get("Response")),
-        "hot": sum(1 for r in qualified if r.get("Priority Tier") == "Hot"),
-        "with_ig": with_ig, "with_web": with_web, "with_phone": with_phone, "with_email": with_email,
-        "pct_ig": pct(with_ig), "pct_web": pct(with_web), "pct_phone": pct(with_phone),
-        "pct_email": pct(with_email),
+        "review": sum(1 for s in prospects if s["_bucket"] == "review"),
+        "rejected": sum(1 for s in prospects if s["_bucket"] == "rejected"),
+        "top_tier": sum(1 for s in qualified if s["Priority Tier"] == "A-Tier"),
+        "pitched": sum(1 for s in qualified if s["Outreach Status"] == "Pitched"),
+        "in_talks": sum(1 for s in qualified if s["Outreach Status"] == "Replied"),
+        "with_ig": have("Instagram"), "with_web": with_web, "with_phone": have("Phone"),
+        "with_email": have("Email"),
+        "pct_ig": round(have("Instagram") * 100 / n), "pct_web": round(with_web * 100 / n),
+        "pct_phone": round(have("Phone") * 100 / n), "pct_email": round(have("Email") * 100 / n),
         "verified_ig": verified("IG Status"), "verified_web": verified("Web Status"),
         "verified_phone": verified("Phone Status"),
-        "no_contact": sum(1 for r in qualified
-                          if not (r.get("Instagram") or r.get("Phone") or r.get("Email"))),
+        "no_contact": sum(1 for s in qualified if not (s["Instagram"] or s["Phone"] or s["Email"])),
+        "hidden_phones": sum(1 for s in stores if any("fake phone" in c for c in s["_cleaning"])),
     }
 
 
-def find_record(records: list[dict], row, name: str):
-    """Locate a store by sheet row (checked against its name), falling back to the name."""
+def find_store(stores: list[dict], row, name: str):
+    """Locate a store by sheet row (checked against its name), falling back to a unique name."""
     try:
         row = int(row)
     except (TypeError, ValueError):
         row = None
     if row:
-        for rec in records:
-            if rec["_row"] == row and rec["Store Name"] == name:
-                return rec
-    matches = [r for r in records if r["Store Name"] == name]
+        for s in stores:
+            if s["_row"] == row and name in (s["Store Name"], s["_name"]):
+                return s
+    matches = [s for s in stores if name in (s["Store Name"], s["_name"])]
     return matches[0] if len(matches) == 1 else None
 
 
-# ─────────────────────────────────────────
-#  BACKGROUND JOBS  (rebuild / verify)
-# ─────────────────────────────────────────
+# ─────────────────────────────────────────  WRITE HELPERS
+def _next_id(records, id_field, prefix, width=4):
+    mx = 0
+    for r in records:
+        m = re.search(r"(\d+)$", str(r.get(id_field, "")))
+        if m:
+            mx = max(mx, int(m.group(1)))
+    return f"{prefix}-{mx + 1:0{width}d}"
 
-job = {"name": None, "running": False, "done": 0, "total": 0, "message": "No job has run yet.",
+
+def log_outreach(targets: list[dict], channel, message, status="Sent", template_used="",
+                 sent_by="Jordan Belfort"):
+    """Append one OUTREACH_LOG event per store; move pipeline_stage to Contacted when sent."""
+    data = load_data(force=True)
+    ss = sheets.open_spreadsheet()
+    existing = list(data["outreach"])
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    entries = []
+    for store in targets:
+        entry = {
+            "outreach_id": _next_id(existing + entries, "outreach_id", "OUT", 5),
+            "store_id": store.get("store_id", ""), "store_name": store["_name"], "channel": channel,
+            "direction": "Outbound", "template_used": template_used, "message": message,
+            "status": status, "sent_at": now, "sent_by": sent_by,
+        }
+        entries.append(entry)
+    sheets.append_by_header(ss, OUTREACH_TAB, OUTREACH_HEADERS, entries)
+    if status == "Sent":
+        for store in targets:
+            if store["Outreach Status"] in OPEN_BADGES:
+                sheets.update_row_cells(ss, STORES_TAB, store["_row"], data["store_headers"],
+                                        {"pipeline_stage": "Contacted"})
+    invalidate()
+
+
+# ─────────────────────────────────────────  VERIFY JOB
+job = {"name": None, "running": False, "done": 0, "total": 0, "message": "Not run yet.",
        "error": None, "started_at": None, "finished_at": None, "stop": False, "result": None}
 _job_lock = threading.Lock()
 
 
-def rebuild_master(progress=None) -> dict:
-    """Merge + clean every store tab into MASTER DATABASE. Source tabs are not modified."""
-    ss = sheets.open_spreadsheet()
-    if progress:
-        progress("Reading every tab…")
-    tabs = sheets.read_all_tabs(ss)
-    if progress:
-        progress(f"Cleaning {sum(max(len(v) - 1, 0) for v in tabs.values())} rows from {len(tabs)} tabs…")
-    records, stats = pipeline.build_master(tabs)
-    if progress:
-        progress(f"Writing {len(records)} stores to {MASTER_TAB}…")
-    sheets.write_master(ss, pipeline.to_rows(records))
-    invalidate()
-    stats.pop("per_tab", None)
-    return stats
-
-
-def verify_master(progress=None, should_stop=None, limit=None) -> dict:
-    """Live-check websites / Instagram / phones for qualified + review stores."""
+def verify_stores(progress=None, should_stop=None, limit=None) -> dict:
+    """Live-check websites / Instagram / phones for qualified + review stores -> VERIFICATION tab."""
     import verify
 
-    records, headers, error = load_master(force=True)
-    if error:
-        raise RuntimeError(error)
-    if records is None:
-        raise RuntimeError("Build the clean database first.")
-    targets = [r for r in records if r["_bucket"] != "rejected"]
-    targets.sort(key=lambda r: (r["_bucket"] != "qualified", -r["_score"]))
+    data = load_data(force=True)
+    if data["error"]:
+        raise RuntimeError(data["error"])
+    targets = [s for s in data["stores"] if s["_bucket"] != "rejected" or s["_customer"]]
+    targets.sort(key=lambda s: (s["_bucket"] != "qualified", -s["_score"]))
     if limit:
         targets = targets[:int(limit)]
+    # Check what the sheet says, not values an earlier run filled in.
+    asked = [dict(s, **{f: "" for f in s["_filled"]}) for s in targets]
 
     def tick(done, total):
         if progress:
             progress(f"Checked {done} of {total} stores…", done, total)
 
-    results = verify.verify_all(targets, progress=tick, should_stop=should_stop)
+    results = verify.verify_all(asked, progress=tick, should_stop=should_stop)
 
     # If nearly every site "failed", the problem is this server's network, not
     # the stores. Saving that would mark good websites as dead.
-    tried = [c for c in results.values() if c.get("Web Status") in ("ok", "unreachable")]
-    dead = sum(1 for c in tried if c["Web Status"] == "unreachable")
+    tried = [r for r in results.values() if r.get("web_status") in ("ok", "unreachable")]
+    dead = sum(1 for r in tried if r["web_status"] == "unreachable")
     if len(tried) >= 5 and dead / len(tried) > 0.6:
         raise RuntimeError(
             f"{dead} of {len(tried)} websites failed to load, which points to a network problem "
             "on the server rather than dead sites. Nothing was saved — try again later.")
 
-    changed = filled = 0
-    for i, changes in results.items():
-        if not changes:
-            continue
-        changed += 1
-        filled += sum(1 for k in ("Instagram", "Phone", "Email") if k in changes)
-        targets[i].update(changes)
-        targets[i]["Cleanup Flag"] = ""            # re-classify with the new evidence
-    pipeline.annotate([r for r in records if not r.get("Cleanup Flag")])
-
     if progress:
-        progress("Saving results to the sheet…", len(targets), len(targets))
+        progress("Saving results…", len(targets), len(targets))
     ss = sheets.open_spreadsheet()
-    out_headers = headers + [h for h in MASTER_HEADERS if h not in headers]
-    rows = [out_headers] + [[rec.get(h, "") for h in out_headers] for rec in records]
-    sheets.write_master(ss, rows)
+    kept = {}
+    for old in _records(sheets.read_tabs(ss, [VERIFY_TAB])[VERIFY_TAB])[1]:
+        kept[store_key(old.get("store_name", ""), old.get("city", ""))] = old
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    for i, found in results.items():
+        store = asked[i]
+        kept[store_key(store["_name"], store.get("city", ""))] = dict(
+            found, store_name=store["_name"], city=store.get("city", ""), website=store["Website"],
+            instagram=store["Instagram"], phone=store["Phone"], checked_at=now)
+    sheets.replace_tab(ss, VERIFY_TAB, [sheets.VERIFY_HEADERS] + [
+        [row.get(h, "") for h in sheets.VERIFY_HEADERS] for row in kept.values()])
     invalidate()
-    checked = [targets[i] for i in results]
+
+    found = list(results.values())
     return {
-        "checked": len(results),
-        "rows_updated": changed,
-        "contact_fields_filled": filled,
-        "websites_ok": sum(1 for r in checked if r.get("Web Status") == "ok"),
-        "websites_unreachable": sum(1 for r in checked if r.get("Web Status") == "unreachable"),
-        "instagram_confirmed": sum(1 for r in checked if r.get("IG Status", "").startswith("ok")),
-        "instagram_mismatch": sum(1 for r in checked if r.get("IG Status") in ("mismatch", "not-found")),
-        "instagram_unverified": sum(1 for r in checked if r.get("IG Status") == "unverified"),
-        "phones_confirmed": sum(1 for r in checked if r.get("Phone Status", "").startswith("ok")),
+        "checked": len(found),
+        "websites_ok": sum(1 for r in found if r["web_status"] == "ok"),
+        "websites_unreachable": dead,
+        "instagram_confirmed": sum(1 for r in found if r["ig_status"].startswith("ok")),
+        "instagram_problems": sum(1 for r in found if r["ig_status"] in ("mismatch", "not-found")),
+        "instagram_unverified": sum(1 for r in found if r["ig_status"] == "unverified"),
+        "phones_confirmed": sum(1 for r in found if r["phone_status"].startswith("ok")),
+        "blanks_found": sum(1 for r in found for f in ("found_instagram", "found_phone", "found_email") if r[f]),
     }
 
 
-def _run_job(name: str, limit=None):
+def _run_job(limit=None):
     def progress(message, done=None, total=None):
         job["message"] = message
         if done is not None:
             job["done"], job["total"] = done, total
 
     try:
-        if name == "rebuild":
-            job["result"] = rebuild_master(progress)
-            job["message"] = (f"Done — {job['result']['qualified']} qualified leads, "
-                              f"{job['result']['needs_review']} to review, "
-                              f"{job['result']['rejected']} rejected.")
-        else:
-            job["result"] = verify_master(progress, lambda: job["stop"], limit)
-            job["message"] = (f"Done — checked {job['result']['checked']} stores, "
-                              f"filled {job['result']['contact_fields_filled']} missing contact fields.")
+        job["result"] = verify_stores(progress, lambda: job["stop"], limit)
+        job["message"] = (f"Done — checked {job['result']['checked']} stores, "
+                          f"found {job['result']['blanks_found']} missing contact details.")
     except Exception as exc:
         job["error"] = f"{type(exc).__name__}: {exc}"
         job["message"] = "Failed."
@@ -311,97 +376,87 @@ def _run_job(name: str, limit=None):
         job["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
 
-def start_job(name: str, limit=None) -> bool:
+def start_job(limit=None) -> bool:
     with _job_lock:
         if job["running"]:
             return False
-        job.update(name=name, running=True, done=0, total=0, error=None, result=None, stop=False,
+        job.update(name="verify", running=True, done=0, total=0, error=None, result=None, stop=False,
                    message="Starting…", started_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
                    finished_at=None)
-    threading.Thread(target=_run_job, args=(name, limit), daemon=True).start()
+    threading.Thread(target=_run_job, args=(limit,), daemon=True).start()
     return True
 
 
-# ─────────────────────────────────────────
-#  PAGES
-# ─────────────────────────────────────────
-
-def _needs_setup(records, error):
-    """Render the setup page when there is no clean database yet."""
-    if records is None and not error:
-        return render_template("setup.html", job=job)
-    return None
-
-
+# ─────────────────────────────────────────  ROUTES
 @app.route("/")
 def index():
-    records, _, error = load_master()
-    setup = _needs_setup(records, error)
-    if setup:
-        return setup
-    outreach, _ = load_outreach()
-    records = records or []
-    stats = compute_stats(records, outreach)
-    recent = sorted(outreach, key=lambda o: o.get("Sent At", ""), reverse=True)[:10]
+    data = load_data()
+    stores, outreach = data["stores"], data["outreach"]
+    stats = compute_stats(stores, outreach)
+    recent = sorted(outreach, key=lambda x: x.get("Sent At", ""), reverse=True)[:10]
 
-    alerts = []
+    # Reorder alerts: customers with no order in 60+ days
     today = datetime.today()
-    for rec in records:
-        if is_retailer(rec) and rec.get("Last Order Date"):
+    alerts = []
+    for s in stores:
+        if not s["_customer"]:
+            continue
+        lod = s.get("Last Order Date", "")
+        if lod:
             try:
-                if (today - datetime.strptime(rec["Last Order Date"][:10], "%Y-%m-%d")).days > 60:
-                    alerts.append(rec)
+                if (today - datetime.strptime(lod[:10], "%Y-%m-%d")).days > 60:
+                    alerts.append(s)
             except ValueError:
                 pass
+        elif s.get("account_status", "").strip().lower() == "dormant":
+            alerts.append(s)
 
-    top = sorted((r for r in records if r["_bucket"] == "qualified"
-                  and r.get("Outreach Status", "").lower() in OPEN_STATUSES and not is_retailer(r)),
-                 key=lambda r: -r["_score"])[:8]
-    return render_template("index.html", stats=stats, recent=recent, alerts=alerts, top=top, error=error)
+    top = sorted((s for s in stores if s["_bucket"] == "qualified" and not s["_customer"]
+                  and s["Outreach Status"] in OPEN_BADGES), key=lambda s: -s["_score"])[:8]
+    return render_template("index.html", stats=stats, recent=recent, alerts=alerts, top=top,
+                           error=data["error"])
 
 
-def _filter_leads(records, args):
+def _filter_leads(stores, args):
+    """Acquisition view = prospects (not yet customers), narrowed by the query string."""
     view = args.get("view", "qualified")
     search = args.get("q", "").strip().lower()
-    state = args.get("state", "").strip()
+    state = args.get("state", "").strip()              # really "market"
     status = args.get("status", "").strip().lower()
     tier = args.get("tier", "").strip()
     contact = args.get("contact", "").strip()
 
-    out = records if view == "all" else [r for r in records if r["_bucket"] == view]
+    out = [s for s in stores if not s["_customer"]]
+    if view != "all":
+        out = [s for s in out if s["_bucket"] == view]
     if search:
-        out = [r for r in out if search in " ".join(
-            (r["Store Name"], r.get("City", ""), r.get("Instagram", ""), r.get("Website", ""),
-             r.get("Notes", ""))).lower()]
+        out = [s for s in out if search in " ".join(
+            (s["Store Name"], s["_name"], s["City"], s["Instagram"], s["Website"], s["Notes"])).lower()]
     if state:
-        out = [r for r in out if r.get("State") == state]
+        out = [s for s in out if s["State"] == state]
     if status:
-        out = [r for r in out if (r.get("Outreach Status", "").lower() or "not contacted") == status]
+        out = [s for s in out if s["Outreach Status"].lower() == status]
     if tier:
-        out = [r for r in out if r.get("Priority Tier") == tier]
-    if contact == "instagram":
-        out = [r for r in out if r.get("Instagram")]
-    elif contact == "phone":
-        out = [r for r in out if r.get("Phone")]
-    elif contact == "email":
-        out = [r for r in out if r.get("Email")]
+        out = [s for s in out if s["Priority Tier"] == tier]
+    if contact in ("instagram", "phone", "email"):
+        out = [s for s in out if s[contact.capitalize()]]
     elif contact == "none":
-        out = [r for r in out if not (r.get("Instagram") or r.get("Phone") or r.get("Email"))]
+        out = [s for s in out if not (s["Instagram"] or s["Phone"] or s["Email"])]
     elif contact == "problem":
-        out = [r for r in out if r.get("Suggested Fixes")
-               or r.get("IG Status") in ("mismatch", "not-found")
-               or r.get("Web Status") == "unreachable"]
-    return sorted(out, key=lambda r: (-r["_score"], r["Store Name"].lower()))
+        out = [s for s in out if has_contact_problem(s)]
+    return sorted(out, key=lambda s: (-s["_score"], s["Store Name"].lower()))
+
+
+def has_contact_problem(s) -> bool:
+    return bool(s["Suggested Fixes"]) or s["IG Status"] in ("mismatch", "not-found") \
+        or s["Web Status"] == "unreachable"
 
 
 @app.route("/leads")
 def leads():
-    records, _, error = load_master()
-    setup = _needs_setup(records, error)
-    if setup:
-        return setup
-    records = records or []
-    filtered = _filter_leads(records, request.args)
+    data = load_data()
+    stores = data["stores"]
+    filtered = _filter_leads(stores, request.args)
 
     try:
         page = max(1, int(request.args.get("page", 1)))
@@ -409,7 +464,6 @@ def leads():
         page = 1
     pages = max(1, -(-len(filtered) // PAGE_SIZE))
     page = min(page, pages)
-    shown = filtered[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
 
     def page_url(n):
         args = request.args.to_dict()
@@ -421,29 +475,29 @@ def leads():
         args["view"] = name
         return url_for("leads", **args)
 
-    counts = {b: sum(1 for r in records if r["_bucket"] == b) for b in ("qualified", "review", "rejected")}
-    counts["all"] = len(records)
+    prospects = [s for s in stores if not s["_customer"]]
+    counts = {b: sum(1 for s in prospects if s["_bucket"] == b) for b in ("qualified", "review", "rejected")}
+    counts["all"] = len(prospects)
     return render_template(
-        "leads.html", leads=shown, total=len(filtered), counts=counts,
-        view=request.args.get("view", "qualified"), page=page, pages=pages,
+        "leads.html", leads=filtered[(page - 1) * PAGE_SIZE: page * PAGE_SIZE], total=len(filtered),
+        counts=counts, view=request.args.get("view", "qualified"), page=page, pages=pages,
         page_url=page_url, view_url=view_url,
-        states=sorted({r.get("State") for r in records if r.get("State")}),
-        args=request.args, error=error)
+        states=sorted({s["State"] for s in prospects if s["State"]}),
+        args=request.args, error=data["error"])
 
 
 @app.route("/export/leads.csv")
 def export_leads():
-    records, _, error = load_master()
-    if error or records is None:
-        return Response(error or "No database yet.", 503)
-    filtered = _filter_leads(records, request.args)
+    data = load_data()
+    if data["error"]:
+        return Response(data["error"], 503)
     fields = ["Store Name", "City", "State", "Country", "Website", "Instagram", "Email", "Phone",
-              "Outreach Status", "Lead Score", "Priority Tier", "Cleanup Flag", "Flag Reasons",
+              "Outreach Status", "lead_score", "Priority Tier", "Cleanup Flag", "Flag Reasons",
               "IG Status", "Web Status", "Phone Status", "Suggested Fixes", "Notes"]
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
     writer.writeheader()
-    writer.writerows(filtered)
+    writer.writerows(_filter_leads(data["stores"], request.args))
     name = f"godspeed-{request.args.get('view', 'qualified')}-leads.csv"
     return Response(buf.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": f"attachment; filename={name}"})
@@ -451,47 +505,57 @@ def export_leads():
 
 @app.route("/retailers")
 def retailers():
-    records, _, error = load_master()
-    setup = _needs_setup(records, error)
-    if setup:
-        return setup
+    data = load_data()
     today = datetime.today()
-    out = []
-    for rec in (records or []):
-        if not is_retailer(rec):
+    rl = []
+    for s in data["stores"]:
+        if not s["_customer"]:
             continue
-        rec = dict(rec, _days_since=None, _alert=False)
-        if rec.get("Last Order Date"):
-            try:
-                rec["_days_since"] = (today - datetime.strptime(rec["Last Order Date"][:10], "%Y-%m-%d")).days
-                rec["_alert"] = rec["_days_since"] > 60
-            except ValueError:
-                pass
-        out.append(rec)
-    return render_template("retailers.html", retailers=out, error=error)
+        lod = s.get("Last Order Date", "")
+        try:
+            d = (today - datetime.strptime(lod[:10], "%Y-%m-%d")).days if lod else None
+        except ValueError:
+            d = None
+        rl.append(dict(s, _days_since=d, _alert=(d is not None and d > 60)))
+    return render_template("retailers.html", retailers=rl, error=data["error"])
 
 
 @app.route("/outreach")
 def outreach():
-    log, error = load_outreach()
-    store_filter = request.args.get("store", "").strip().lower()
-    channel_filter = request.args.get("channel", "").strip().lower()
-    date_filter = request.args.get("date", "").strip()
+    data = load_data()
+    log = data["outreach"]
+    sf = request.args.get("store", "").strip().lower()
+    cf = request.args.get("channel", "").strip().lower()
+    dfilt = request.args.get("date", "").strip()
+    store_names = sorted({o["Store Name"] for o in log})
+    if sf:
+        log = [o for o in log if sf in o["Store Name"].lower()]
+    if cf:
+        log = [o for o in log if cf in o["Channel"].lower()]
+    if dfilt:
+        log = [o for o in log if dfilt in o["Sent At"]]
+    log = sorted(log, key=lambda x: x["Sent At"], reverse=True)
+    channels = ["Email", "Instagram DM", "WhatsApp", "Phone"]
+    return render_template("outreach.html", log=log, store_names=store_names, channels=channels,
+                           store_filter=sf, channel_filter=cf, date_filter=dfilt, error=data["error"])
 
-    filtered = log
-    if store_filter:
-        filtered = [o for o in filtered if store_filter in o.get("Store Name", "").lower()]
-    if channel_filter:
-        filtered = [o for o in filtered if channel_filter in o.get("Channel", "").lower()]
-    if date_filter:
-        filtered = [o for o in filtered if date_filter in o.get("Sent At", "")]
-    filtered = sorted(filtered, key=lambda o: o.get("Sent At", ""), reverse=True)
 
-    return render_template(
-        "outreach.html", log=filtered,
-        store_names=sorted({o.get("Store Name", "") for o in log if o.get("Store Name")}),
-        channels=["Email", "Instagram DM", "SMS", "Phone"],
-        store_filter=store_filter, channel_filter=channel_filter, date_filter=date_filter, error=error)
+@app.route("/orders")
+def orders():
+    data = load_data()
+    rows = data["orders"]
+    summary = {
+        "orders": len(rows),
+        "revenue": sum(_num(r.get("order_total")) for r in rows),
+        "comm_pending": sum(_num(r.get("commission_amount")) for r in rows
+                            if r.get("commission_status", "").lower() == "pending"),
+        "comm_invoiced": sum(_num(r.get("commission_amount")) for r in rows
+                             if r.get("commission_status", "").lower() == "invoiced"),
+        "comm_paid": sum(_num(r.get("commission_amount")) for r in rows
+                         if r.get("commission_status", "").lower() == "paid"),
+    }
+    rows = sorted(rows, key=lambda x: x.get("order_date", ""), reverse=True)
+    return render_template("orders.html", orders=rows, summary=summary, error=data["error"])
 
 
 FLAG_LABELS = {
@@ -499,37 +563,32 @@ FLAG_LABELS = {
     "not-a-store": "Articles, directories and posts (not stores)",
     "junk": "Not clothing retailers", "mismatch": "Name doesn't match its website",
     "low-fit": "No streetwear signal", "broken-data": "Broken rows",
-    "excluded": "Held out by you",
+    "duplicate": "Same store listed more than once", "excluded": "Held out by you",
 }
 
 
 @app.route("/quality")
 def quality_page():
-    records, _, error = load_master()
-    setup = _needs_setup(records, error)
-    if setup:
-        return setup
-    records = records or []
-    outreach, _ = load_outreach()
-    stats = compute_stats(records, outreach)
+    data = load_data()
+    stores = data["stores"]
+    stats = compute_stats(stores, data["outreach"])
+    prospects = [s for s in stores if not s["_customer"]]
 
     reasons = {}
-    for rec in records:
-        if rec["_bucket"] == "qualified":
+    for s in prospects:
+        if s["_bucket"] == "qualified":
             continue
-        for part in rec.get("Cleanup Flag", "").split("+"):
+        for part in s["Cleanup Flag"].split("+"):
             reasons[part] = reasons.get(part, 0) + 1
     breakdown = sorted(((FLAG_LABELS.get(k, k), v) for k, v in reasons.items() if k and k != "OK"),
                        key=lambda item: -item[1])
-
-    problems = [r for r in records if r["_bucket"] == "qualified" and (
-        r.get("Suggested Fixes") or r.get("IG Status") in ("mismatch", "not-found")
-        or r.get("Web Status") == "unreachable")]
-    review = sorted((r for r in records if r["_bucket"] == "review"), key=lambda r: r["Store Name"].lower())
-    verified_any = any(r.get("Web Status") in ("ok", "unreachable") for r in records)
+    problems = [s for s in prospects if s["_bucket"] == "qualified" and has_contact_problem(s)]
+    review = sorted((s for s in prospects if s["_bucket"] == "review"),
+                    key=lambda s: (-s["_score"], s["Store Name"].lower()))
+    verified_any = any(s.get("_checked_at") for s in stores)
     return render_template("quality.html", stats=stats, breakdown=breakdown, problems=problems[:100],
                            problem_count=len(problems), review=review[:60], review_count=len(review),
-                           job=job, verified_any=verified_any, error=error)
+                           job=job, verified_any=verified_any, error=data["error"])
 
 
 @app.route("/add-store", methods=["GET", "POST"])
@@ -537,165 +596,145 @@ def add_store():
     if request.method == "GET":
         return render_template("add_store.html", error=None)
     try:
-        form = {k: request.form.get(k, "").strip() for k in
-                ("name", "city", "state", "instagram", "website", "phone", "brands", "notes")}
-        if not form["name"]:
+        f = request.form
+        name = f.get("name", "").strip()
+        if not name:
             return render_template("add_store.html", error="Store name is required.")
-        carries = "godspeed" in form["brands"].lower()
-        digits = q.normalize_phone(form["phone"])
-        handle = q.normalize_instagram(form["instagram"])
-        rec = {
-            "Store Name": form["name"], "City": form["city"],
-            "State": q.normalize_state(form["state"]), "Country": "USA",
-            "Website": q.normalize_website(form["website"]) or form["website"],
-            "Instagram": "@" + handle if handle else form["instagram"],
-            "Phone": q.format_phone(digits) if digits else form["phone"],
-            "Carries Godspeed": "Yes" if carries else "",
-            "Outreach Status": "Converted" if carries else "Not Contacted",
-            "Notes": " · ".join(p for p in (form["notes"], f"Brands: {form['brands']}" if form["brands"] else "") if p),
-            "Date Added": datetime.today().strftime("%Y-%m-%d"),
-            "Sources": "Added in dashboard",
+        data = load_data(force=True)
+        email = q.normalize_email(f.get("email", "")) or f.get("email", "").strip()
+        handle = q.normalize_instagram(f.get("instagram", ""))
+        ig = "@" + handle if handle else f.get("instagram", "").strip()
+        digits = q.normalize_phone(f.get("phone", ""))
+        phone = q.format_phone(digits) if digits else f.get("phone", "").strip()
+        store = {
+            "store_id": _next_id(data["stores"], "store_id", "GS", 4),
+            "store_name": name,
+            "country": f.get("country", "USA").strip() or "USA",
+            "city": f.get("city", "").strip(),
+            "market": q.normalize_state(f.get("market", "") or f.get("state", "")),
+            "contact_name": f.get("contact_name", "").strip(),
+            "instagram": ig, "ig_followers": "",
+            "website": q.normalize_website(f.get("website", "")) or f.get("website", "").strip(),
+            "email": email, "email_status": "unverified",
+            "phone": phone, "whatsapp": "",
+            "brands_carried": f.get("brands", "").strip(),
+            "source": "Manual",
+            "pipeline_stage": "Qualified" if (email or ig or phone) else "New",
+            "account_status": "", "owner": "Goldie",
+            "notes": " · ".join(p for p in (f.get("notes", "").strip(),
+                                           f"Brands: {f.get('brands', '').strip()}" if f.get("brands", "").strip() else "") if p),
+            "date_added": datetime.today().strftime("%Y-%m-%d"),
+            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
         }
-        pipeline.annotate([rec])
         ss = sheets.open_spreadsheet()
-        headers = sheets.ensure_tab(ss, MASTER_TAB, MASTER_HEADERS)
-        sheets.append_rows(ss, MASTER_TAB, [[rec.get(h, "") for h in headers]])
+        sheets.append_by_header(ss, STORES_TAB, list(store), [store])
         invalidate()
-        return redirect(url_for("leads", added=1, view=q.bucket(rec["Cleanup Flag"])))
+        return redirect(url_for("leads", added=1, view="all", q=name))
     except Exception as exc:
         return render_template("add_store.html", error=str(exc))
 
 
 @app.route("/scraper")
 def scraper():
-    return redirect(url_for("quality_page"))
+    state = {"running": False, "status": "queued",
+             "message": "Validated scrape queued — Wilmar gathers, Raj validates on write, "
+                        "Vito scores. Only rows that pass the validation gate are stored."}
+    return render_template("scraper.html", state=state, error=None)
 
 
-# ─────────────────────────────────────────
-#  API
-# ─────────────────────────────────────────
-
-DEFAULT_PITCH = ("Hey! We're Godspeed — a streetwear brand that would be a perfect fit for your "
-                 "store. Mind if we send over our lookbook?")
-DEFAULT_REORDER = ("Hey! Just checking in — ready to restock Godspeed? Let us know what you need "
-                   "and we'll get it shipped ASAP.")
-
-
-def _log_outreach(targets: list[dict], channel: str, message: str, status: str, mark_pitched: bool):
-    ss = sheets.open_spreadsheet()
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    sheets.append_outreach(ss, [{
-        "Store Name": rec["Store Name"], "City": rec.get("City", ""), "State": rec.get("State", ""),
-        "Channel": channel, "Message": message, "Sent At": now, "Status": status, "Agent": "Dashboard",
-    } for rec in targets])
-    if mark_pitched:
-        _, headers, _ = load_master()
-        for rec in targets:
-            if rec.get("Outreach Status", "").lower() in OPEN_STATUSES:
-                sheets.update_row_cells(ss, MASTER_TAB, rec["_row"], headers,
-                                        {"Outreach Status": "Pitched", "Outreach Channel": channel})
-    invalidate()
-
-
-def _ready():
-    """(records, headers, error_response) for API calls that need the database."""
-    records, headers, error = load_master(force=True)
-    if error or records is None:
-        return None, None, (jsonify(success=False, error=error or "Build the clean database first."), 503)
-    return records, headers, None
+# ─────────────────────────────────────────  API
+def _targets(data, items):
+    """Resolve [{row, name}] or [name] to store records."""
+    out = []
+    for item in items:
+        store = find_store(data["stores"], item.get("row"), item.get("name", "")) \
+            if isinstance(item, dict) else find_store(data["stores"], None, item)
+        if store and store not in out:
+            out.append(store)
+    return out
 
 
 @app.route("/api/send-pitch", methods=["POST"])
 def send_pitch():
-    data = request.get_json(silent=True) or {}
+    body = request.get_json(silent=True) or {}
+    status = body.get("status", "Sent")                # supports Drafted / Queued / Sent
     try:
-        records, _, problem = _ready()
-        if problem:
-            return problem
-        rec = find_record(records, data.get("row"), data.get("store_name", ""))
-        if not rec:
+        data = load_data(force=True)
+        if data["error"]:
+            return jsonify(success=False, error=data["error"]), 503
+        store = find_store(data["stores"], body.get("row"), body.get("store_name", ""))
+        if not store:
             return jsonify(success=False, error="Store not found — refresh the page and try again."), 404
-        _log_outreach([rec], data.get("channel", "Instagram DM"), data.get("message") or DEFAULT_PITCH,
-                      "Sent", mark_pitched=True)
-        return jsonify(success=True, message=f"Pitch logged for {rec['Store Name']}")
+        log_outreach([store], body.get("channel", "Instagram DM"), body.get("message", ""),
+                     status=status, template_used=body.get("template_used", ""))
+        return jsonify(success=True, message=f"{status} logged for {store['Store Name']}")
     except Exception as exc:
         return jsonify(success=False, error=str(exc)), 500
 
 
 @app.route("/api/bulk-pitch", methods=["POST"])
 def bulk_pitch():
-    data = request.get_json(silent=True) or {}
+    body = request.get_json(silent=True) or {}
+    status = body.get("status", "Sent")
     try:
-        records, _, problem = _ready()
-        if problem:
-            return problem
-        targets = []
-        for item in data.get("stores", []):
-            if isinstance(item, dict):
-                rec = find_record(records, item.get("row"), item.get("name", ""))
-            else:
-                rec = find_record(records, None, item)
-            if rec and rec not in targets:
-                targets.append(rec)
+        data = load_data(force=True)
+        if data["error"]:
+            return jsonify(success=False, error=data["error"]), 503
+        targets = _targets(data, body.get("stores", []))
         if not targets:
             return jsonify(success=False, error="No matching stores."), 404
-        _log_outreach(targets, data.get("channel", "Instagram DM"), data.get("message") or DEFAULT_PITCH,
-                      "Sent", mark_pitched=True)
-        return jsonify(success=True, message=f"Pitch logged for {len(targets)} stores", count=len(targets))
+        log_outreach(targets, body.get("channel", "Instagram DM"), body.get("message", ""), status=status)
+        return jsonify(success=True, count=len(targets),
+                       message=f"{status} logged for {len(targets)} stores")
     except Exception as exc:
         return jsonify(success=False, error=str(exc)), 500
 
 
 @app.route("/api/send-reorder", methods=["POST"])
 def send_reorder():
-    data = request.get_json(silent=True) or {}
+    body = request.get_json(silent=True) or {}
     try:
-        records, _, problem = _ready()
-        if problem:
-            return problem
-        rec = find_record(records, data.get("row"), data.get("store_name", ""))
-        if not rec:
+        data = load_data(force=True)
+        if data["error"]:
+            return jsonify(success=False, error=data["error"]), 503
+        store = find_store(data["stores"], body.get("row"), body.get("store_name", ""))
+        if not store:
             return jsonify(success=False, error="Store not found."), 404
-        _log_outreach([rec], data.get("channel", "Email"), data.get("message") or DEFAULT_REORDER,
-                      "Reorder Sent", mark_pitched=False)
-        return jsonify(success=True, message=f"Reorder request logged for {rec['Store Name']}")
+        log_outreach([store], body.get("channel", "Email"), body.get("message", ""),
+                     status="Sent", template_used="reorder")
+        return jsonify(success=True, message=f"Reorder logged for {store['Store Name']}")
     except Exception as exc:
         return jsonify(success=False, error=str(exc)), 500
 
 
 @app.route("/api/review", methods=["POST"])
 def review():
-    """Approve / reject a store by hand. The decision overrides the automatic flag."""
-    data = request.get_json(silent=True) or {}
-    decision = {"approve": "Approved", "reject": "Rejected", "clear": ""}.get(data.get("decision"))
+    """Approve / reject a store by hand. Stored in the REVIEW tab; overrides the automatic flag."""
+    body = request.get_json(silent=True) or {}
+    decision = {"approve": "Approved", "reject": "Rejected", "clear": ""}.get(body.get("decision"))
     if decision is None:
         return jsonify(success=False, error="decision must be approve, reject or clear"), 400
     try:
-        records, headers, problem = _ready()
-        if problem:
-            return problem
-        rec = find_record(records, data.get("row"), data.get("store_name", ""))
-        if not rec:
+        data = load_data(force=True)
+        if data["error"]:
+            return jsonify(success=False, error=data["error"]), 503
+        store = find_store(data["stores"], body.get("row"), body.get("store_name", ""))
+        if not store:
             return jsonify(success=False, error="Store not found."), 404
-        ss = sheets.open_spreadsheet()
-        if "Review" not in headers:
-            headers = headers + ["Review"]
-            sheets.update_row_cells(ss, MASTER_TAB, 1, headers, {"Review": "Review"})
-        sheets.update_row_cells(ss, MASTER_TAB, rec["_row"], headers, {"Review": decision})
+        sheets.append_by_header(sheets.open_spreadsheet(), REVIEW_TAB, sheets.REVIEW_HEADERS, [{
+            "store_name": store["_name"], "city": store.get("city", ""), "decision": decision,
+            "decided_at": datetime.now().strftime("%Y-%m-%d %H:%M")}])
         invalidate()
-        return jsonify(success=True, bucket=q.bucket(rec.get("Cleanup Flag", ""), decision))
+        return jsonify(success=True, bucket=q.bucket(store["Cleanup Flag"], decision))
     except Exception as exc:
         return jsonify(success=False, error=str(exc)), 500
 
 
 @app.route("/api/job/start", methods=["POST"])
 def job_start():
-    data = request.get_json(silent=True) or {}
-    name = data.get("job")
-    if name not in ("rebuild", "verify"):
-        return jsonify(success=False, error="job must be rebuild or verify"), 400
-    if not start_job(name, limit=data.get("limit")):
-        return jsonify(success=False, error=f"A {job['name']} job is already running."), 409
+    body = request.get_json(silent=True) or {}
+    if not start_job(limit=body.get("limit")):
+        return jsonify(success=False, error="Verification is already running."), 409
     return jsonify(success=True)
 
 
@@ -710,17 +749,21 @@ def job_status():
     return jsonify({k: v for k, v in job.items() if k != "stop"})
 
 
+@app.route("/api/scraper/start", methods=["POST"])
+def scraper_start():
+    return jsonify({"success": True, "queued": True,
+                    "message": "Validated scrape queued — only rows passing the gate are stored."})
+
+
 @app.route("/api/stats")
 def api_stats():
-    records, _, error = load_master()
-    if error:
-        return jsonify(error=error), 503
-    if records is None:
-        return jsonify(setup_required=True)
-    outreach, _ = load_outreach()
-    return jsonify(compute_stats(records, outreach))
+    data = load_data()
+    stats = compute_stats(data["stores"], data["outreach"])
+    if data["error"]:
+        stats["error"] = data["error"]
+    return jsonify(stats)
 
 
 if __name__ == "__main__":
-    print("Godspeed Retail Intelligence Dashboard — http://127.0.0.1:8080")
+    print("🚀 Godspeed Dashboard v2 — STORES / OUTREACH_LOG / ORDERS — http://127.0.0.1:8080")
     app.run(debug=False, host="127.0.0.1", port=int(os.environ.get("PORT", 8080)))

@@ -1,4 +1,4 @@
-{# Progress panel for the rebuild / verify background jobs. #}
+{# Progress panel for the verify job. #}
 <div id="job-panel" class="job-panel {% if job.running %}show{% endif %}" data-running="{{ 'true' if job.running else 'false' }}">
   <div class="job-row">
     <span id="job-message">{{ job.message }}</span>

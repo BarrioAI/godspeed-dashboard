@@ -1,71 +1,53 @@
 # Godspeed Retail Intelligence Dashboard
 
-Finds, cleans and tracks independent streetwear / sneaker / boutique stores for
-Godspeed wholesale outreach. Data lives in the "Godspeed Retail Intelligence"
-Google Sheet.
+Tracks stores, outreach, orders and commission for Godspeed wholesale. Data lives in the
+"Godspeed Retail Intelligence" Google Sheet: `STORES` / `OUTREACH_LOG` / `ORDERS`
+(see `SPEC-wholesale-loop.md` for the operating loop).
 
-## How it works
+## Quality layer
 
-```
-source tabs (ACQUISITION LEADS, STORES, city tabs, old backup)   never modified
-      │  Rebuild — merge duplicates, clean contact fields, classify
-      ▼
-MASTER DATABASE tab                    the one tab the dashboard reads
-      │  Verify — open each store's website, confirm Instagram / phone
-      ▼
-Leads · Retailers · Outreach · Data Quality
-```
+`STORES` still contains a lot of scraper output: chain store-locator pages, brand sites,
+articles and Instagram posts, fake phone numbers repeated across hundreds of rows. The
+dashboard shows it through a read-side filter instead of rewriting it:
 
-Every store lands in one of three views on the Leads page:
-
-| View | What is in it |
+| Leads view | What is in it |
 |---|---|
-| **Qualified** | Independent stores with a streetwear signal. Ready to pitch. |
+| **Qualified** | Independent stores with a streetwear signal whose name matches their own site. |
 | **Needs review** | Looks like a real store, but nothing on the row proves the fit. Approve or reject by hand. |
-| **Rejected** | Chains, brand-owned stores, restaurants and dealerships, scraped articles and posts. |
+| **Rejected** | Chains, brand-owned stores, non-retail, scraped articles and posts, duplicate listings. |
 
-Nothing is deleted. A person's Approve / Reject decision always overrides the
-automatic flag, and survives rebuilds, as do outreach statuses.
+- Junk contact values are hidden, not deleted. `STORES` keeps its raw cells.
+- **Approve / Reject** decisions go to a `REVIEW` tab and override the automatic flag.
+- **Verify** (Quality page) fetches each store's website and compares the Instagram profile
+  and phone number shown there with the sheet. Results go to a `VERIFICATION` tab: matches
+  are marked verified, missing details found on the site are shown as "from site", and
+  disagreements are listed as suggestions. Instagram blocks most automated lookups, so a
+  handle that could not be confirmed from the store's own site is marked `unverified`.
+- Both tabs are keyed by store name + city, so they survive `sync_to_sheets.py` rewriting
+  `STORES`.
+- The only `STORES` cell the dashboard writes is `pipeline_stage`, when a pitch is logged
+  as Sent. Pitches are logged to `OUTREACH_LOG`; the dashboard does not send DMs or emails.
 
-Both jobs run from the **Data Quality** page:
-
-- **Rebuild** re-reads every store tab. Run it after stores are added to the other tabs.
-- **Verify** fetches each store's website and compares the Instagram profile and phone
-  number shown there with the sheet. Matches are marked verified, blanks are filled in,
-  and disagreements become suggestions (existing values are never overwritten).
-  Instagram itself blocks most automated lookups, so a handle that could not be confirmed
-  from the store's site is marked `unverified`, not `ok`.
-
-Pitches are **logged** (OUTREACH LOG tab + the store's Outreach Status). The dashboard
-does not send DMs or emails.
-
-## Files
+To change what counts as a chain or a good fit, edit the lists at the top of `quality.py`.
 
 | File | Purpose |
 |---|---|
-| `quality.py` | The rules: chain / brand / junk lists, fit signals, phone / Instagram / email validation |
-| `pipeline.py` | Builds MASTER DATABASE from the source tabs |
+| `quality.py` | Rules: chain / brand / not-a-store lists, fit signals, phone / Instagram / email validation |
+| `stores.py` | Applies the rules to `STORES` rows (hide junk contacts, flag, mark duplicates) |
 | `verify.py` | Live website / Instagram / phone checks |
-| `sheets.py` | Google Sheets access |
+| `sheets.py` | Google Sheets access (batched reads, failure-safe writes) |
 | `app.py` | The dashboard |
-| `super_clean.py` | The same two jobs from a terminal |
-
-To change what counts as a chain or a good fit, edit the lists at the top of `quality.py`
-and press Rebuild.
+| `super_clean.py` | The same audit from a terminal |
 
 ## Run
 
-Deployed on Render (`render.yaml`). It needs `GOOGLE_TOKEN_JSON` and
-`GOOGLE_CREDENTIALS_JSON` (the OAuth token and client JSON). Set `DASHBOARD_PASSWORD`
-to put the site behind a password.
-
-Locally:
+Deployed on Render (`render.yaml`). Needs `GOOGLE_TOKEN_JSON` and `GOOGLE_CREDENTIALS_JSON`.
+Set `DASHBOARD_PASSWORD` to put the site behind a password. Run with one gunicorn worker:
+verify progress is held in memory.
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
-python -m pytest tests                              # 46 tests, no network or credentials needed
-GODSPEED_DEV_XLSX=export.xlsx python app.py         # run against a downloaded copy of the sheet
-python super_clean.py build                         # preview the clean database as data/master_preview.csv
-python super_clean.py build --apply                 # write the MASTER DATABASE tab
-python super_clean.py verify --apply                # live-check contact info and save
+python -m pytest tests                                      # no network or credentials needed
+python super_clean.py --csv data/godspeed_leads_final.csv   # audit the leads file
+GODSPEED_LOCAL_DIR=/path/to/csvs python app.py              # run on STORES.csv, OUTREACH_LOG.csv, ...
 ```

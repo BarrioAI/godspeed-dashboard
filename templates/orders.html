@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Orders & Commission — Godspeed{% endblock %}
+
+{% block content %}
+<div class="container">
+
+  <div class="page-title">📦 Orders &amp; Commission</div>
+  <div class="page-sub">Fulfillment, service, and your 10% commission — all in one place</div>
+
+  {% if error %}
+  <div class="alert alert-warning">⚠️ {{ error }}</div>
+  {% endif %}
+
+  <!-- SUMMARY CARDS -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-icon">📦</div>
+      <div class="stat-value">{{ summary.orders }}</div>
+      <div class="stat-label">Total Orders</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">💵</div>
+      <div class="stat-value">${{ '{:,.0f}'.format(summary.revenue) }}</div>
+      <div class="stat-label">Wholesale Revenue</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">⏳</div>
+      <div class="stat-value">${{ '{:,.0f}'.format(summary.comm_pending) }}</div>
+      <div class="stat-label">Commission Pending</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">🧾</div>
+      <div class="stat-value">${{ '{:,.0f}'.format(summary.comm_invoiced) }}</div>
+      <div class="stat-label">Commission Invoiced</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">✅</div>
+      <div class="stat-value">${{ '{:,.0f}'.format(summary.comm_paid) }}</div>
+      <div class="stat-label">Commission Paid</div>
+    </div>
+  </div>
+
+  {% if orders %}
+  <div class="card" style="padding: 0;">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>Order</th><th>Store</th><th>Date</th><th>Items</th>
+            <th>Total</th><th>Payment</th><th>Fulfillment</th>
+            <th>Commission</th><th>Comm. Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for o in orders %}
+          <tr>
+            <td><strong>{{ o.order_id or '—' }}</strong></td>
+            <td>{{ o.store_name or '—' }}</td>
+            <td>{{ o.order_date or '—' }}</td>
+            <td>{{ o.items_summary or '—' }}</td>
+            <td>{{ o.currency or 'USD' }} {{ o.order_total or '0' }}</td>
+            <td>
+              {% set p = (o.payment_status or '')|lower %}
+              {% if p == 'paid' %}<span class="badge badge-converted">Paid</span>
+              {% elif p == 'partial' %}<span class="badge badge-pitched">Partial</span>
+              {% else %}<span class="badge badge-notcontacted">Unpaid</span>{% endif %}
+            </td>
+            <td>{{ o.delivery_status or o.order_status or '—' }}
+              {% if o.tracking_number %}<br><small class="table-link">{{ o.carrier }} {{ o.tracking_number }}</small>{% endif %}
+            </td>
+            <td>{{ o.currency or 'USD' }} {{ o.commission_amount or '0' }}</td>
+            <td>
+              {% set c = (o.commission_status or '')|lower %}
+              {% if c == 'paid' %}<span class="badge badge-converted">Paid</span>
+              {% elif c == 'invoiced' %}<span class="badge badge-replied">Invoiced</span>
+              {% else %}<span class="badge badge-notcontacted">Pending</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="card">
+    <div class="empty-state">
+      <div class="empty-icon">📦</div>
+      <div class="empty-title">No orders yet</div>
+      <p>When a store places its first order, log it here — fulfillment and commission track automatically.</p>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

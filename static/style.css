@@ -767,10 +767,9 @@ a.table-link:hover { text-decoration: underline; }
 .dot-bad { background: rgba(231,76,60,0.25); color: var(--danger); }
 
 .badge-newlead { background: rgba(52,152,219,0.15); color: #3498DB; }
-.tier-hot { background: rgba(231,76,60,0.2); color: #FF8A7A; }
-.tier-strong { background: rgba(201,168,76,0.2); color: var(--gold); }
-.tier-warm { background: rgba(52,152,219,0.15); color: #6BB6E8; }
-.tier-cold { background: rgba(138,155,184,0.2); color: var(--text-muted); }
+.tier-a { background: rgba(231,76,60,0.2); color: #FF8A7A; }
+.tier-b { background: rgba(201,168,76,0.2); color: var(--gold); }
+.tier-c { background: rgba(138,155,184,0.2); color: var(--text-muted); }
 
 .pager {
   display: flex; justify-content: space-between; align-items: center; gap: 12px;

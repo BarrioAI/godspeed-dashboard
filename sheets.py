@@ -14,16 +14,23 @@ import os
 import threading
 import time
 
-from pipeline import MASTER_HEADERS, MASTER_TAB
-
 SPREADSHEET_ID = os.environ.get("GODSPEED_SPREADSHEET_ID", "1My0941FahT4XvcdOK1UQtnMPA1qYI-Pqmkx-9v5nEnA")
 TOKEN_PATH = os.environ.get("GOOGLE_TOKEN_PATH", "/Users/elbarrio/.openclaw/drive-token.json")
 CREDS_PATH = os.environ.get("GOOGLE_CREDS_PATH", "/Users/elbarrio/.openclaw/google-credentials.json")
 
-OUTREACH_TAB = "OUTREACH LOG"
-OUTREACH_HEADERS = [
-    "Store Name", "City", "State", "Channel", "Message",
-    "Sent At", "Response", "Response At", "Status", "Agent",
+STORES_TAB = "STORES"
+OUTREACH_TAB = "OUTREACH_LOG"
+ORDERS_TAB = "ORDERS"
+# Added by the quality layer. Both are keyed by store name + city so they
+# survive STORES being re-synced from the CSV.
+REVIEW_TAB = "REVIEW"
+REVIEW_HEADERS = ["store_name", "city", "decision", "decided_at"]
+VERIFY_TAB = "VERIFICATION"
+VERIFY_HEADERS = [
+    "store_name", "city", "website", "instagram", "phone",
+    "web_status", "ig_status", "phone_status",
+    "found_instagram", "found_phone", "found_email", "site_mentions",
+    "suggested_fixes", "checked_at",
 ]
 
 _lock = threading.Lock()
@@ -70,9 +77,12 @@ def open_spreadsheet():
     with _lock:
         if _spreadsheet is None or time.time() - _opened_at > 1800:
             dev_xlsx = os.environ.get("GODSPEED_DEV_XLSX")
-            if dev_xlsx:
+            local_dir = os.environ.get("GODSPEED_LOCAL_DIR")
+            if dev_xlsx or local_dir:
+                # Local dev: a copy of the data, writes stay in memory.
                 from fake_sheets import FakeSpreadsheet
-                _spreadsheet = FakeSpreadsheet.from_xlsx(dev_xlsx)
+                _spreadsheet = (FakeSpreadsheet.from_xlsx(dev_xlsx) if dev_xlsx
+                                else FakeSpreadsheet.from_csv_dir(local_dir))
             else:
                 import gspread
                 _spreadsheet = gspread.authorize(_credentials()).open_by_key(SPREADSHEET_ID)
@@ -103,12 +113,16 @@ def tab_titles(ss) -> list[str]:
     return [ws.title for ws in ss.worksheets()]
 
 
-def read_all_tabs(ss) -> dict[str, list[list]]:
-    """Every tab's values in one batch request."""
-    titles = tab_titles(ss)
-    result = ss.values_batch_get([_a1(t) for t in titles])
-    ranges = result.get("valueRanges", [])
-    return {t: (vr.get("values") or []) for t, vr in zip(titles, ranges)}
+def read_tabs(ss, tabs: list[str]) -> dict[str, list[list]]:
+    """Several tabs in one batch request. Tabs that do not exist come back empty."""
+    existing = set(tab_titles(ss))
+    wanted = [t for t in tabs if t in existing]
+    out = {t: [] for t in tabs}
+    if wanted:
+        result = ss.values_batch_get([_a1(t) for t in wanted])
+        for t, vr in zip(wanted, result.get("valueRanges", [])):
+            out[t] = vr.get("values") or []
+    return out
 
 
 def read_tab(ss, tab: str) -> list[list]:
@@ -129,29 +143,29 @@ def ensure_tab(ss, tab: str, headers: list[str], rows: int = 1000):
     return existing
 
 
-def write_master(ss, rows: list[list]):
+def replace_tab(ss, tab: str, rows: list[list]):
     """
-    Replace the MASTER DATABASE tab with `rows` (header row first).
+    Replace a tab's contents with `rows` (header row first), creating it if needed.
 
     The new data is written over the old first and leftovers are cleared after,
     so a failed request can never leave the tab empty.
     """
-    need_rows, need_cols = len(rows) + 50, max(len(r) for r in rows) + 2
-    ws = next((w for w in ss.worksheets() if w.title == MASTER_TAB), None)
+    width = max(len(r) for r in rows)
+    need_rows, need_cols = len(rows) + 50, width + 2
+    ws = next((w for w in ss.worksheets() if w.title == tab), None)
     if ws is None:
-        ws = ss.add_worksheet(title=MASTER_TAB, rows=need_rows, cols=need_cols)
+        ss.add_worksheet(title=tab, rows=need_rows, cols=need_cols)
         had_rows = had_cols = 0
     else:
         had_rows, had_cols = ws.row_count, ws.col_count
         if had_rows < need_rows or had_cols < need_cols:
             ws.resize(rows=max(had_rows, need_rows), cols=max(had_cols, need_cols))
-    width = max(len(r) for r in rows)
     rows = [list(r) + [""] * (width - len(r)) for r in rows]
-    ss.values_update(_a1(MASTER_TAB, "A1"), params={"valueInputOption": "RAW"}, body={"values": rows})
+    ss.values_update(_a1(tab, "A1"), params={"valueInputOption": "RAW"}, body={"values": rows})
     if had_rows > len(rows):                           # old rows below the new data
-        ss.values_clear(_a1(MASTER_TAB, f"A{len(rows) + 1}:{_col_letter(max(had_cols, width))}{had_rows}"))
+        ss.values_clear(_a1(tab, f"A{len(rows) + 1}:{_col_letter(max(had_cols, width))}{had_rows}"))
     if had_cols > width:                               # old columns to the right of it
-        ss.values_clear(_a1(MASTER_TAB, f"{_col_letter(width + 1)}1:{_col_letter(had_cols)}{len(rows)}"))
+        ss.values_clear(_a1(tab, f"{_col_letter(width + 1)}1:{_col_letter(had_cols)}{len(rows)}"))
 
 
 def update_row_cells(ss, tab: str, row_number: int, headers: list[str], changes: dict):
@@ -172,7 +186,7 @@ def append_rows(ss, tab: str, rows: list[list]):
                      body={"values": rows})
 
 
-def append_outreach(ss, entries: list[dict]):
-    """Append to OUTREACH LOG by header name. Never clears or rewrites the log."""
-    headers = ensure_tab(ss, OUTREACH_TAB, OUTREACH_HEADERS)
-    append_rows(ss, OUTREACH_TAB, [[e.get(h, "") for h in headers] for e in entries])
+def append_by_header(ss, tab: str, default_headers: list[str], entries: list[dict]):
+    """Append dicts to a tab by its own header names. Never clears or rewrites the tab."""
+    headers = ensure_tab(ss, tab, default_headers)
+    append_rows(ss, tab, [[e.get(h, "") for h in headers] for e in entries])

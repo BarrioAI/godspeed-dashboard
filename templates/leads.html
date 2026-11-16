@@ -54,7 +54,7 @@
       <span class="filter-label">Status</span>
       <select name="status" onchange="this.form.submit()">
         <option value="">All</option>
-        {% for value in ['Not Contacted', 'New Lead', 'Pitched', 'Replied', 'Converted', 'Declined'] %}
+        {% for value in ['Not Contacted', 'New Lead', 'Pitched', 'Replied', 'Declined'] %}
         <option value="{{ value|lower }}" {% if args.get('status') == value|lower %}selected{% endif %}>{{ value }}</option>
         {% endfor %}
       </select>
@@ -63,7 +63,7 @@
       <span class="filter-label">Priority</span>
       <select name="tier" onchange="this.form.submit()">
         <option value="">All</option>
-        {% for value in ['Hot', 'Strong', 'Warm', 'Cold'] %}
+        {% for value in ['A-Tier', 'B-Tier', 'C-Tier'] %}
         <option value="{{ value }}" {% if args.get('tier') == value %}selected{% endif %}>{{ value }}</option>
         {% endfor %}
       </select>
@@ -114,7 +114,6 @@
             </td>
             <td class="cell-store">
               <strong>{{ store['Store Name'] }}</strong>
-              {% if store['Carries Godspeed'] == 'Yes' %}<span class="badge badge-retailer">Retailer</span>{% endif %}
               {% if store['Website'] and store['Web Status'] != 'social-link' %}
               <br><a href="{{ store['Website'] }}" target="_blank" rel="noopener" class="table-link">🌐 {{ store['Website']|replace('https://', '')|replace('http://', '')|replace('www.', '')|truncate(32, true, '…') }}</a>
               {{ status_dot(store['Web Status']) }}
@@ -132,17 +131,17 @@
             <td>
               {% if store['Instagram'] %}
               <a href="https://instagram.com/{{ store['Instagram'].lstrip('@') }}" target="_blank" rel="noopener" class="table-link">{{ store['Instagram'] }}</a>
-              {{ status_dot(store['IG Status']) }}
+              {{ status_dot(store['IG Status']) }}{% if 'Instagram' in store._filled %}<span class="muted" title="Not in the sheet — found on the store's website"> from site</span>{% endif %}
               {% else %}<span class="muted">—</span>{% endif %}
             </td>
             <td>
-              {% if store['Phone'] %}<a href="tel:{{ store['Phone'] }}" class="table-link">{{ store['Phone'] }}</a> {{ status_dot(store['Phone Status']) }}{% endif %}
+              {% if store['Phone'] %}<a href="tel:{{ store['Phone'] }}" class="table-link">{{ store['Phone'] }}</a> {{ status_dot(store['Phone Status']) }}{% if 'Phone' in store._filled %}<span class="muted" title="Not in the sheet — found on the store's website"> from site</span>{% endif %}{% endif %}
               {% if store['Email'] %}{% if store['Phone'] %}<br>{% endif %}<a href="mailto:{{ store['Email'] }}" class="table-link">{{ store['Email'] }}</a>{% endif %}
               {% if not store['Phone'] and not store['Email'] %}<span class="muted">—</span>{% endif %}
             </td>
             <td>
               {% if store['Priority Tier'] %}
-              <span class="badge tier-{{ store['Priority Tier']|lower }}">{{ store['Priority Tier'] }} · {{ store._score }}</span>
+              <span class="badge tier-{{ store['Priority Tier'][0]|lower }}">{{ store['Priority Tier'] }} · {{ store._score }}</span>
               {% else %}<span class="muted">—</span>{% endif %}
             </td>
             <td>
