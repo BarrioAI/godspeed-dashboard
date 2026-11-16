@@ -728,3 +728,7 @@ textarea { resize: vertical; min-height: 80px; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* ─── OUTREACH ─── */
+.reply-quote { color: var(--text); font-size: 13.5px; }
+.alert a { margin-left: 8px; }

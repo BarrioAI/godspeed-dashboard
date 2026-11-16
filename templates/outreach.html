@@ -4,15 +4,100 @@
 {% block content %}
 <div class="container">
 
-  <div class="page-title">Outreach Log</div>
-  <div class="page-sub">Full history of all pitches, messages, and responses</div>
+  <div class="page-head">
+    <div>
+      <div class="page-title">Outreach</div>
+      <div class="page-sub">Every store you have contacted, what they said, and who is due a follow-up. Log each message and reply here so the pipeline stays true.</div>
+    </div>
+    <div class="page-actions">
+      <a href="/leads" class="btn btn-primary btn-sm">Pitch more stores</a>
+    </div>
+  </div>
 
   {% if error %}
   <div class="alert alert-warning">{{ error }}</div>
   {% endif %}
 
+  <div class="stats-grid">
+    <a class="stat-card stat-link" href="/outreach"><div class="stat-value">{{ summary.stores }}</div><div class="stat-label">Stores contacted</div></a>
+    <a class="stat-card stat-link" href="/outreach?show=waiting"><div class="stat-value">{{ summary.waiting }}</div><div class="stat-label">Waiting on a reply</div></a>
+    <a class="stat-card stat-link {% if summary.due %}stat-hero{% endif %}" href="/outreach?show=due"><div class="stat-value">{{ summary.due }}</div><div class="stat-label">Follow-up due</div></a>
+    <a class="stat-card stat-link" href="/outreach?show=replied"><div class="stat-value">{{ summary.replied }}</div><div class="stat-label">Replied</div></a>
+    <div class="stat-card"><div class="stat-value">{{ summary.reply_rate }}%</div><div class="stat-label">Reply rate</div></div>
+    <a class="stat-card stat-link" href="/retailers"><div class="stat-value">{{ summary.won }}</div><div class="stat-label">Won</div></a>
+  </div>
+
+  <div class="tabs">
+    <a class="tab {% if view != 'log' %}active{% endif %}" href="/outreach">By store <span class="tab-count">{{ summary.stores }}</span></a>
+    <a class="tab {% if view == 'log' %}active{% endif %}" href="/outreach?view=log">Every message <span class="tab-count">{{ log|length }}</span></a>
+  </div>
+
+  {% if view != 'log' %}
+  {% if show %}
+  <div class="alert">Showing {{ {'due': 'stores due a follow-up (no reply in ' ~ follow_up_days ~ ' days or more)', 'waiting': 'stores waiting on a reply', 'replied': 'stores that replied'}[show] or show }}. <a href="/outreach">Show all</a></div>
+  {% endif %}
+  {% if threads %}
+  <div class="card" style="padding: 0;">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr><th>Store</th><th>Last message</th><th>Sent</th><th>Their reply</th><th>Stage</th><th>Actions</th></tr>
+        </thead>
+        <tbody>
+          {% for t in threads %}
+          <tr data-row="{{ t.row }}" data-store="{{ t.name }}">
+            <td class="cell-store">
+              <strong>{{ t.name }}</strong>
+              <div class="muted">{{ t.city }}{% if t.state %}, {{ t.state }}{% endif %}</div>
+            </td>
+            <td class="cell-loc">
+              {{ t.last_channel or '—' }}
+              <div class="muted">{{ t.last_sent }}</div>
+            </td>
+            <td class="cell-loc">
+              {{ t.touches }}×
+              {% if t.days is not none %}<div class="muted">{{ 'today' if t.days == 0 else t.days ~ (' day ago' if t.days == 1 else ' days ago') }}</div>{% endif %}
+            </td>
+            <td>
+              {% if t.reply %}
+              <span class="reply-quote">“{{ t.reply[:90] }}{% if t.reply|length > 90 %}…{% endif %}”</span>
+              <div class="muted">{{ t.reply_at }}</div>
+              {% elif t.due %}
+              <span class="badge badge-reorder">Follow-up due</span>
+              {% elif t.waiting %}
+              <span class="muted">No reply yet</span>
+              {% else %}<span class="muted">—</span>{% endif %}
+            </td>
+            <td><span class="badge badge-{{ t.badge|lower|replace(' ', '') }} status-badge">{{ t.badge }}</span></td>
+            <td class="cell-actions">
+              {% if t.row %}
+              <button class="btn btn-primary btn-sm" onclick="openReplyModal(this)"
+                      data-row="{{ t.row }}" data-store="{{ t.name }}" data-channel="{{ t.last_channel }}">Log reply</button>
+              <button class="btn btn-outline btn-sm" onclick="openPitchModal(this)"
+                      data-row="{{ t.row }}" data-store="{{ t.name }}" data-instagram="{{ t.instagram }}"
+                      data-email="{{ t.email }}" data-brands="{{ t.brands[:3]|join(', ') }}"
+                      data-followup="{{ t.touches + 1 }}">Follow up</button>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="card">
+    <div class="empty-state">
+      <div class="empty-title">{% if show %}Nothing here{% else %}No outreach logged yet{% endif %}</div>
+      <p>{% if show %}<a href="/outreach">Show all stores</a>{% else %}Pitch a store from the <a href="/leads">Leads page</a> and it will appear here.{% endif %}</p>
+    </div>
+  </div>
+  {% endif %}
+  {% else %}
+
   <!-- FILTERS -->
   <form method="get" class="filter-bar">
+    <input type="hidden" name="view" value="log">
     <div class="filter-group">
       <span class="filter-label">Store</span>
       <select name="store" onchange="this.form.submit()">
@@ -35,28 +120,8 @@
       <span class="filter-label">Date</span>
       <input type="date" name="date" value="{{ date_filter }}" onchange="this.form.submit()">
     </div>
-    <a href="/outreach" class="btn btn-outline btn-sm">Clear</a>
+    <a href="/outreach?view=log" class="btn btn-outline btn-sm">Clear</a>
   </form>
-
-  <!-- STATS ROW -->
-  <div class="stats-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 20px;">
-    <div class="stat-card" style="padding: 16px;">
-      <div class="stat-value" style="font-size: 28px;">{{ log|length }}</div>
-      <div class="stat-label">Total Messages</div>
-    </div>
-    <div class="stat-card" style="padding: 16px;">
-      <div class="stat-value" style="font-size: 28px; color: #3498DB;">{{ log | selectattr('Channel', 'equalto', 'Instagram DM') | list | length }}</div>
-      <div class="stat-label">Instagram DMs</div>
-    </div>
-    <div class="stat-card" style="padding: 16px;">
-      <div class="stat-value" style="font-size: 28px; color: #9B59B6;">{{ log | selectattr('Channel', 'equalto', 'Email') | list | length }}</div>
-      <div class="stat-label">Emails</div>
-    </div>
-    <div class="stat-card" style="padding: 16px;">
-      <div class="stat-value" style="font-size: 28px; color: var(--success);">{{ log | selectattr('Response', 'ne', '') | list | length }}</div>
-      <div class="stat-label">Got Replies</div>
-    </div>
-  </div>
 
   {% if log %}
   <div class="card" style="padding: 0;">
@@ -80,11 +145,11 @@
             <td>
               {% set ch = entry.Channel or '' %}
               {% if 'instagram' in ch.lower() or 'dm' in ch.lower() %}
-              <span style="color: #E1306C;">{{ ch }}</span>
+              <span>{{ ch }}</span>
               {% elif 'email' in ch.lower() %}
-              <span style="color: #9B59B6;">{{ ch }}</span>
+              <span>{{ ch }}</span>
               {% elif 'sms' in ch.lower() %}
-              <span style="color: #27AE60;">{{ ch }}</span>
+              <span>{{ ch }}</span>
               {% else %}
               <span>{{ ch or '—' }}</span>
               {% endif %}
@@ -112,6 +177,8 @@
               {% set st = (entry.Status or '') | lower %}
               {% if 'converted' in st %}
               <span class="badge badge-converted">{{ entry.Status }}</span>
+              {% elif 'declined' in st %}
+              <span class="badge badge-declined">{{ entry.Status }}</span>
               {% elif 'replied' in st or 'reply' in st %}
               <span class="badge badge-replied">{{ entry.Status }}</span>
               {% elif 'reorder' in st %}
@@ -150,6 +217,10 @@
     </div>
   </div>
   {% endif %}
+  {% endif %}
 
 </div>
+
+{% include "_pitch_modal.html" %}
+{% include "_reply_modal.html" %}
 {% endblock %}

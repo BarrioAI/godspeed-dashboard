@@ -185,7 +185,14 @@
               <span class="badge badge-{{ status|lower|replace(' ', '') }} status-badge">{{ status }}</span>
             </td>
             <td class="cell-actions">
-              {% if store._bucket == 'qualified' %}
+              {% if store._bucket == 'qualified' and status not in ('Not Contacted', 'New Lead') %}
+              <button class="btn btn-primary btn-sm" onclick="openReplyModal(this)"
+                      data-row="{{ store._row }}" data-store="{{ store['Store Name'] }}">Log reply</button>
+              <button class="btn btn-outline btn-sm" onclick="openPitchModal(this)"
+                      data-row="{{ store._row }}" data-store="{{ store['Store Name'] }}"
+                      data-instagram="{{ store['Instagram'] }}" data-email="{{ store['Email'] }}"
+                      data-brands="{{ store.Brands[:3]|join(', ') }}" data-followup="2">Follow up</button>
+              {% elif store._bucket == 'qualified' %}
               <button class="btn btn-primary btn-sm" onclick="openPitchModal(this)"
                       data-row="{{ store._row }}" data-store="{{ store['Store Name'] }}"
                       data-instagram="{{ store['Instagram'] }}" data-email="{{ store['Email'] }}"
@@ -228,4 +235,5 @@
 </div>
 
 {% include "_pitch_modal.html" %}
+{% include "_reply_modal.html" %}
 {% endblock %}

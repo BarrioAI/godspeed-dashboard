@@ -5,6 +5,8 @@ Run the weekly refresh end to end. Goal: Goldie opens the dashboard to a Qualifi
 ranked by real fit and has contact details that work. Do the whole run without stopping to ask;
 the only things that wait for Goldie are listed in step 8.
 
+0. Run `/source-leads` first (new prospects for this week's market) and carry its new rows through
+   the steps below in the same pull request.
 1. `git checkout main && git pull`, then `python ops.py status`. Stop and report if the dashboard
    is down or `sheets_error` is not null.
 2. `python ops.py sync --dry-run`. If the sheet is behind the file, `python ops.py sync` first, so
@@ -30,6 +32,9 @@ the only things that wait for Goldie are listed in step 8.
    - **This week's call list**: the top 20 Qualified stores not yet pitched
      (`python ops.py leads --view qualified`), each with city, the brands it stocks, and the best
      way to reach it.
+   - **New this week**: the stores `/source-leads` added, by market, and which ones verification
+     confirmed.
+   - **Outreach**: stores waiting on a reply and those due a follow-up (`python ops.py threads`).
    - What changed: contact details corrected, filled and cleared; stores that moved bucket.
    - What needs Goldie: `needs_a_look` items you could not settle, websites that have failed to
      load two runs in a row (probably closed), and any store whose site mentions Godspeed.
