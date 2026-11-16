@@ -1,5 +1,8 @@
 # Godspeed Retail Intelligence Dashboard
 
+Operated end to end by Claude Code: see `CLAUDE.md` for how each job is run
+(`/audit-leads`, `/clean-leads`, `/verify-leads`, `/add-leads`, `/sync-leads`).
+
 Tracks stores, outreach, orders and commission for Godspeed wholesale. Data lives in the
 "Godspeed Retail Intelligence" Google Sheet: `STORES` / `OUTREACH_LOG` / `ORDERS`
 (see `SPEC-wholesale-loop.md` for the operating loop).
@@ -23,10 +26,13 @@ dashboard shows it through a read-side filter instead of rewriting it:
   are marked verified, missing details found on the site are shown as "from site", and
   disagreements are listed as suggestions. Instagram blocks most automated lookups, so a
   handle that could not be confirmed from the store's own site is marked `unverified`.
-- Both tabs are keyed by store name + city, so they survive `sync_to_sheets.py` rewriting
-  `STORES`.
-- The only `STORES` cell the dashboard writes is `pipeline_stage`, when a pitch is logged
-  as Sent. Pitches are logged to `OUTREACH_LOG`; the dashboard does not send DMs or emails.
+- Both tabs are keyed by store name + city, so they survive `STORES` being re-synced.
+- **Sync** (Quality page, or `python ops.py sync`) brings `STORES` in line with
+  `data/godspeed_leads_final.csv` in the deploy. It adds new stores and refreshes contact
+  details and scores; it never deletes a row or touches pipeline stage / account status.
+- Apart from Sync, the only `STORES` cell the dashboard writes is `pipeline_stage`, when a
+  pitch is logged as Sent. Pitches are logged to `OUTREACH_LOG`; the dashboard does not
+  send DMs or emails.
 
 To change what counts as a chain or a good fit, edit the lists at the top of `quality.py`.
 
@@ -37,7 +43,8 @@ To change what counts as a chain or a good fit, edit the lists at the top of `qu
 | `verify.py` | Live website / Instagram / phone checks |
 | `sheets.py` | Google Sheets access (batched reads, failure-safe writes) |
 | `app.py` | The dashboard |
-| `super_clean.py` | The same audit from a terminal |
+| `super_clean.py` | The same audit from a terminal; `--fix` cleans the leads file in place |
+| `ops.py` | Drives the live dashboard over HTTPS (status, export, sync, verify) |
 
 ## Run
 

@@ -12,6 +12,13 @@ the VERIFICATION tab is written; STORES is never modified.
   python super_clean.py --report audit.csv            # also write one row per store
   python super_clean.py --verify --limit 50           # live-check 50 stores, save nothing
   python super_clean.py --verify --apply              # live-check all, save to VERIFICATION
+  python super_clean.py --fix                         # clean data/godspeed_leads_final.csv in place
+
+--fix is the one mode that rewrites data: it blanks fake phones and junk
+Instagram / email values in the leads file, moves Instagram links out of the
+Website column, and recomputes the Contact and Reach parts of each score (the
+score_leads.py rubric) so that removed junk no longer earns points. Brand and
+Market points are left as scored. No row is deleted.
 """
 
 from __future__ import annotations
@@ -19,6 +26,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
+import re
 
 import sheets
 
@@ -39,6 +48,41 @@ def _from_csv(path: str):
     return FakeSpreadsheet({sheets.STORES_TAB: [header] + rows[1:]})
 
 
+LEADS_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "godspeed_leads_final.csv")
+
+
+def fix_leads(path: str):
+    import score_leads
+    import stores
+
+    with open(path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        header, rows = reader.fieldnames, list(reader)
+    changed = stores.scrub_leads(rows)
+    tiers_before = {t: sum(1 for r in rows if r.get("Priority Tier") == t) for t in ("A-Tier", "B-Tier", "C-Tier")}
+    for row in rows:
+        score, tier, breakdown = score_leads.score_row(row)
+        # Contact and Reach are recomputed from the row's current contact details
+        # (so junk no longer earns points); Brand and Market stay as scored.
+        old = re.fullmatch(r"Contact:(\d+)/Brand:(\d+)/Market:(\d+)/Reach:(\d+)", row.get("Score Breakdown") or "")
+        new = re.fullmatch(r"Contact:(\d+)/Brand:(\d+)/Market:(\d+)/Reach:(\d+)", breakdown)
+        if old and new:
+            contact, reach = int(new.group(1)), int(new.group(4))
+            brand, market = int(old.group(2)), int(old.group(3))
+            score = contact + brand + market + reach
+            tier = "A-Tier" if score >= 75 else "B-Tier" if score >= 45 else "C-Tier"
+            breakdown = f"Contact:{contact}/Brand:{brand}/Market:{market}/Reach:{reach}"
+        row["Lead Score"], row["Priority Tier"], row["Score Breakdown"] = str(score), tier, breakdown
+    tiers_after = {t: sum(1 for r in rows if r.get("Priority Tier") == t) for t in tiers_before}
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=header, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+    print(json.dumps({"file": path, "rows": len(rows), "contact_cells_changed": changed,
+                      "tiers_before": tiers_before, "tiers_after": tiers_after}, indent=2))
+    print("Now run: python scripts/validate_leads.py", path)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--csv", help="audit a leads CSV instead of the live sheet")
@@ -47,7 +91,11 @@ def main():
     parser.add_argument("--verify", action="store_true", help="also run the live website / Instagram checks")
     parser.add_argument("--apply", action="store_true", help="with --verify: save results to the VERIFICATION tab")
     parser.add_argument("--limit", type=int, help="with --verify: only the top N stores")
+    parser.add_argument("--fix", action="store_true", help="clean and re-score the leads CSV in place")
     args = parser.parse_args()
+
+    if args.fix:
+        return fix_leads(args.csv or LEADS_CSV)
 
     offline = bool(args.csv or args.xlsx)
     if args.csv:

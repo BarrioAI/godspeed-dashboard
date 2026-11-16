@@ -70,7 +70,7 @@
             <th>Sent At</th>
             <th>Response</th>
             <th>Status</th>
-            <th>Agent</th>
+            <th>Sent by</th>
           </tr>
         </thead>
         <tbody>
@@ -123,7 +123,7 @@
               {% endif %}
             </td>
             <td>
-              <span style="font-size: 12px; color: var(--text-muted);">{{ entry.Agent or 'Jordan Belfort' }}</span>
+              <span style="font-size: 12px; color: var(--text-muted);">{{ entry.sent_by or entry.Agent or '—' }}</span>
             </td>
           </tr>
           {% endfor %}

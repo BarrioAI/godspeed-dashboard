@@ -189,9 +189,10 @@ async function reviewStore(btn, decision) {
 let jobTimer = null;
 let onJobDone = null;
 
-async function startJob(btn) {
+async function startJob(btn, name = 'verify') {
+  if (name === 'sync' && !confirm('Update the STORES tab from the leads file in this deploy?')) return;
   if (btn) btn.disabled = true;
-  const data = await postJSON('/api/job/start', {});
+  const data = await postJSON('/api/job/start', { job: name });
   if (!data.success) {
     if (btn) btn.disabled = false;
     showToast(`❌ ${data.error}`, 'error');
@@ -223,7 +224,7 @@ async function pollJob() {
   document.getElementById('job-message').textContent = data.error ? `Failed: ${data.error}` : data.message;
   const fill = document.getElementById('job-bar-fill');
   fill.style.width = data.total ? `${Math.round((data.done / data.total) * 100)}%` : (data.running ? '8%' : '100%');
-  document.getElementById('job-stop').style.display = data.running ? '' : 'none';
+  document.getElementById('job-stop').style.display = data.running && data.name === 'verify' ? '' : 'none';
   if (!data.running) {
     clearInterval(jobTimer);
     jobTimer = null;

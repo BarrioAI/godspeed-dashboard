@@ -4,7 +4,7 @@
 
 **North-star KPI:** Reorder rate. First orders that never repeat are noise. Accounts that reorder *are* the business.
 
-**Owners:** Wilmar (read-only scraping) · Vito (scoring/analytics) · Jordan Belfort (outreach) · Raj (sole writer/dev — all schema + automation) · Warren Buffet (credit terms) · Brian Steele (legal/tax) · Adolfo (router — delegates, never implements)
+**Who does what:** Claude Code runs the system (sourcing, scoring, cleaning, verification, sync, the dashboard and its schema). Goldie decides, sends outreach and closes. See `CLAUDE.md` for how each job is run.
 
 ---
 
@@ -14,18 +14,18 @@ Every stage has an **entry trigger**, an **owner**, an **action**, an **exit tri
 
 | # | Stage | Owner | Entry trigger | Action | Exit trigger → next |
 |---|-------|-------|---------------|--------|---------------------|
-| 0 | **SOURCE** (standing job, weekly) | Wilmar | Scheduled run | Scrape anchor-brand stockist pages + IG follow-graph / tagged-brands of the 4 live accounts → raw candidate rows | Batch lands in `CANDIDATES` |
-| 1 | **SCORE** | Vito | New `CANDIDATES` batch | Apply scoring rubric, dedupe against `STORES` | Score ≥60 → write to `STORES` (validate-on-write); 40–59 → `nurture`; <40 → `rejected` |
-| 2 | **OUTREACH** | Jordan | New `STORES` row, `stage=queued` | Work queue top-down by `lead_score`; market-calibrated, proof-led, sequenced (touch 1/2/3) | First touch sent → `stage=contacted` |
-| 3 | **ENGAGE** | Jordan | Reply received | Log reply, send Brandboom line sheet, qualify intent | Positive intent → `stage=line_sheet_sent`; ghost after seq → `stage=dormant_lead` |
-| 4 | **CLOSE** | Jordan + Warren + Brian | `line_sheet_sent` | Terms (Warren: deposit vs Net 30), sample if needed, agreement (Brian) | First order placed → `stage=won`, write to `ORDERS` |
-| 5 | **FULFILL** | Raj (system) | `ORDERS` row created | Confirm stock, mark order `confirmed` | `order.status=confirmed` |
-| 6 | **INVOICE** | Raj (system) + Warren | `order.status=confirmed` | Auto-generate invoice → Stripe (US/EU) or wire flag (LatAm); send | Webhook → `INVOICES.status=paid/overdue` |
-| 7 | **REORDER** | Jordan + Vito | Days since last order > cadence | Vito flags accounts due; Jordan re-engages with new drop/restock | New order → reorder counter++; this is the KPI that matters |
+| 0 | **SOURCE** (standing job, weekly) | Claude Code | Scheduled run | Scrape anchor-brand stockist pages + IG follow-graph / tagged-brands of the 4 live accounts → raw candidate rows | Batch lands in `CANDIDATES` |
+| 1 | **SCORE** | Claude Code | New `CANDIDATES` batch | Apply scoring rubric, dedupe against `STORES` | Score ≥60 → write to `STORES` (validate-on-write); 40–59 → `nurture`; <40 → `rejected` |
+| 2 | **OUTREACH** | Goldie | New `STORES` row, `stage=queued` | Work queue top-down by `lead_score`; market-calibrated, proof-led, sequenced (touch 1/2/3) | First touch sent → `stage=contacted` |
+| 3 | **ENGAGE** | Goldie | Reply received | Log reply, send Brandboom line sheet, qualify intent | Positive intent → `stage=line_sheet_sent`; ghost after seq → `stage=dormant_lead` |
+| 4 | **CLOSE** | Goldie | `line_sheet_sent` | Terms (deposit vs Net 30), sample if needed, agreement | First order placed → `stage=won`, write to `ORDERS` |
+| 5 | **FULFILL** | Dashboard | `ORDERS` row created | Confirm stock, mark order `confirmed` | `order.status=confirmed` |
+| 6 | **INVOICE** | Dashboard | `order.status=confirmed` | Auto-generate invoice → Stripe (US/EU) or wire flag (LatAm); send | Webhook → `INVOICES.status=paid/overdue` |
+| 7 | **REORDER** | Claude Code + Goldie | Days since last order > cadence | Claude Code flags accounts due; Goldie re-engages with new drop/restock | New order → reorder counter++; this is the KPI that matters |
 
 ---
 
-## Stage 1 — The Scoring Rubric (Vito)
+## Stage 1 — The Scoring Rubric
 
 Score 0–100. This is the gate that protects you from re-flooding the list into another 3,476-row mess. Only ≥60 enters the working pipeline.
 
@@ -40,7 +40,7 @@ Score 0–100. This is the gate that protects you from re-flooding the list into
 
 **Thresholds:** ≥60 → `STORES` (queued) · 40–59 → `nurture` (re-score next batch) · <40 → `rejected`.
 
-### Anchor brands to scrape, by market (Wilmar's source list)
+### Anchor brands to scrape, by market
 
 - **LatAm (warm):** start with what Broken Chains + Hype already stock. Layer in Carrots, Pleasures, Market, Born x Raised — imported US streetwear LatAm boutiques actually carry. Blessd / Westcol / Bizzy relationships open the door once a store is on the list.
 - **West Coast US:** Brain Dead, Awake NY, Born x Raised, Honor the Gift, Sky High Farm.
@@ -52,7 +52,7 @@ Score 0–100. This is the gate that protects you from re-flooding the list into
 
 ## Data Model
 
-Raj owns all writes. Validate-on-write at every intake — reject bad data at the door, never clean afterward.
+Store details are written only through the leads file and the dashboard's sync (see `CLAUDE.md`). Validate-on-write at every intake — reject bad data at the door, never clean afterward.
 
 ### `CANDIDATES` (new — raw scrape output, pre-gate)
 `candidate_id` · `name` · `source` (which anchor/seed produced it) · `instagram` · `website` · `brands_detected[]` · `city` · `market` · `raw_payload` · `scraped_at`
@@ -79,7 +79,7 @@ Live read over `ORDERS` + `INVOICES`: total booked, total collected, outstanding
 **Front end:** Brandboom stays as catalog + line sheet + order capture.
 
 **Automation engine:** Stripe Invoicing, triggered off `ORDERS`.
-1. Order flips to `confirmed` → Raj's system creates a Stripe invoice from the line items (terms + due date from Warren's credit rule).
+1. Order flips to `confirmed` → the dashboard creates a Stripe invoice from the line items (terms + due date from the credit rule).
 2. Stripe sends the hosted PDF + payment page, runs its own dunning/reminders.
 3. Webhook updates `INVOICES.status` → paid / overdue, syncs to the `SALES` view.
 
@@ -87,7 +87,7 @@ Live read over `ORDERS` + `INVOICES`: total booked, total collected, outstanding
 - **US (incl. Puerto Rico → Treats 787) + EU** → Stripe cards / ACH / SEPA. Fully automatic.
 - **Colombia (Broken Chains) + Peru (Future Visions)** → cross-border; Stripe coverage thin. Collect via wire / Wise, set `payment_method=wire`, mark paid manually. No fully-automated path exists for LatAm cross-border — plan for the manual rail.
 
-**Credit policy (Warren):** new accounts → deposit or pay-upfront until trust is established; proven reorder accounts → Net 30. **Tax (Brian):** confirm US sales-tax nexus and EU VAT handling before going live — flag, don't assume.
+**Credit policy:** new accounts → deposit or pay-upfront until trust is established; proven reorder accounts → Net 30. **Tax:** confirm with your accountant US sales-tax nexus and EU VAT handling before going live — flag, don't assume.
 
 **Build in Stripe test mode first**, validate the full ORDERS→INVOICES→webhook round trip, then switch to live.
 
@@ -97,22 +97,22 @@ Live read over `ORDERS` + `INVOICES`: total booked, total collected, outstanding
 
 ## Activation Sequence — dormant → live
 
-Run in order. Each step has a single owner so nothing stalls waiting on "everyone."
+Run in order.
 
-1. **Raj — schema migration.** Add `CANDIDATES` + `INVOICES` tables and the new `STORES` fields. Deploy via Render. Confirm validate-on-write rejects dupes/garbage at intake.
-2. **Wilmar — first scrape.** Run against a starter list: 5 anchor brands × your 3 priority markets, plus the 4 lookalike seeds. Target ~150 raw candidates into `CANDIDATES`.
-3. **Vito — score the batch.** Apply the rubric. Expect ~30–50 to clear ≥60 and seed `STORES` as `queued`.
-4. **Jordan — work the top 20.** This week, top 20 by `lead_score`, sequenced (touch 1 → wait → touch 2 → wait → touch 3). Market-calibrated, proof-led. Log every touch.
-5. **Raj — wire Stripe (test mode).** Stand up the ORDERS→INVOICES→webhook path end to end on test data.
-6. **Adolfo — set the weekly cadence.** Wilmar scrapes weekly → Vito scores → Jordan's queue refills automatically. One standing KPI tile on the dashboard: **reorder rate**, plus outstanding/overdue from `SALES`.
+1. **Schema.** `CANDIDATES` + `INVOICES` tabs and the new `STORES` fields exist. Validate-on-write rejects dupes/garbage at intake.
+2. **Clean what is there.** `/clean-leads`, then `/sync-leads`, then `/verify-leads`. Work only from the Qualified view.
+3. **First sourcing run.** `/add-leads` for each priority market: 5 anchor brands × 3 markets, plus the 4 lookalike seeds. Only stores that clear the rubric go in.
+4. **Goldie works the top 20.** Top 20 by `lead_score`, sequenced (touch 1 → wait → touch 2 → wait → touch 3). Market-calibrated, proof-led. Log every touch in the dashboard.
+5. **Wire Stripe (test mode).** Stand up the ORDERS→INVOICES→webhook path end to end on test data.
+6. **Set the weekly cadence** below as a scheduled Claude Code task. One standing KPI tile on the dashboard: **reorder rate**, plus outstanding/overdue from `SALES`.
 
 ---
 
 ## Weekly Loop Cadence (once live)
 
-- **Mon** — Wilmar scrape + Vito score → queue refilled.
-- **Tue–Thu** — Jordan works queue top-down; replies advance stages; line sheets out.
-- **Fri** — Vito reports: new qualified, reply rate, stage conversion, reorder rate, outstanding invoices. Warren flags overdue.
+- **Mon** — Claude Code: `/add-leads` for the week's market, `/verify-leads`, `/sync-leads` → queue refilled.
+- **Tue–Thu** — Goldie works the queue top-down; replies advance stages; line sheets out.
+- **Fri** — Claude Code reports: new qualified, reply rate, stage conversion, reorder rate, outstanding and overdue invoices.
 - **Continuous** — confirmed orders auto-invoice; reorder-due accounts surface for re-engagement.
 
 The loop is healthy when the queue never empties and reorder rate trends up. If the queue dries, the problem is upstream (scrape/score); if replies stall, it's outreach; if first orders don't repeat, it's product/relationship — and the dashboard now tells you which.

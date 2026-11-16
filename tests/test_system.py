@@ -389,3 +389,123 @@ def test_verify_job_refuses_to_save_a_network_outage(client, ss, site):
     with pytest.raises(RuntimeError, match="network problem"):
         dashboard.verify_stores()
     assert "VERIFICATION" not in ss.tabs
+
+
+# ── sync: leads file -> STORES ───────────────────────────────────────────────
+
+LEADS_HEADER = ["Store Name", "City", "State", "Country", "Website", "Instagram", "Email", "Phone",
+                "Carries Supreme", "Carries Hellstar", "Carries Godspeed", "Last Order Date",
+                "Outreach Status", "Outreach Channel", "Notes", "Date Added", "Lead Score", "Priority Tier",
+                "Brands Carried", "Score Reasons", "Score Breakdown"]
+
+
+def _lead(name, city, state, website="", instagram="", phone="", score="40", tier="C-Tier"):
+    row = dict.fromkeys(LEADS_HEADER, "")
+    row.update({"Store Name": name, "City": city, "State": state, "Country": "USA", "Website": website,
+                "Instagram": instagram, "Phone": phone, "Outreach Status": "Not Contacted",
+                "Lead Score": score, "Priority Tier": tier})
+    return row
+
+
+@pytest.fixture
+def leads_file(tmp_path, monkeypatch):
+    import csv
+
+    def write(rows):
+        path = tmp_path / "leads.csv"
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=LEADS_HEADER)
+            writer.writeheader()
+            writer.writerows(rows)
+        monkeypatch.setattr(dashboard, "REPO_LEADS_CSV", str(path))
+    return write
+
+
+def test_sync_updates_details_adds_stores_and_deletes_nothing(client, ss, leads_file):
+    leads_file([
+        _lead("Sole Supremacy", "San Jose", "CA", "https://solesupremacy.com/", "@solesupremacy",
+              "(408) 800-4950", score="58", tier="B-Tier"),
+        _lead("House of Drip", "Detroit", "Michigan", "https://houseofdripmi.com/"),     # junk scrubbed in the file
+        _lead("New Kicks Boutique", "Oakland", "CA", "https://newkicks.com", "@newkicks"),
+    ])
+    client.post("/api/send-pitch", json={"store_name": "Sole Supremacy"})                # stage -> Contacted
+    before = len(ss.tabs["STORES"])
+
+    preview = dashboard.sync_stores_from_repo(dry_run=True)
+    assert (preview["added"], preview["updated"]) == (1, 2) and len(ss.tabs["STORES"]) == before
+
+    result = dashboard.sync_stores_from_repo()
+    assert (result["added"], result["updated"], result["only_in_sheet_kept"]) == (1, 2, before - 3)
+    assert len(ss.tabs["STORES"]) == before + 1                                          # nothing deleted
+
+    head = ss.tabs["STORES"][0]
+    sheet = {r[0]: dict(zip(head, r)) for r in ss.tabs["STORES"][1:]}
+    assert sheet["Sole Supremacy"]["lead_score"] == "58"
+    assert sheet["Sole Supremacy"]["pipeline_stage"] == "Contacted"                      # dashboard-owned column kept
+    assert (sheet["House of Drip"]["instagram"], sheet["House of Drip"]["phone"]) == ("", "")
+    assert sheet["New Kicks Boutique"]["pipeline_stage"] == "Not Contacted"
+    assert sheet["Broken Chains"]["account_status"] == "Active"                          # not in the file: untouched
+
+    assert dashboard.sync_stores_from_repo()["updated"] == 0                             # second run is a no-op
+    assert by_name()["New Kicks Boutique"]["_bucket"] == "qualified"
+
+
+def test_sync_matches_names_mangled_by_encoding(client, ss, leads_file):
+    good = "Studios – HELLSTAR"
+    ss.tabs["STORES"].append(_store(good.encode("utf-8").decode("latin-1"), "MedellÃ\xadn", "Colombia"))
+    ss.tabs["STORES"].append(_store("Twin Kicks", "Reno", "NV", phone="1037486289"))
+    ss.tabs["STORES"].append(_store("Twin Kicks", "Reno", "NV", phone="2147483647"))
+    before = len(ss.tabs["STORES"])
+    leads_file([_lead(good, "Medellín", "Colombia"), _lead("Twin Kicks", "Reno", "NV"),
+                _lead("Twin Kicks", "Reno", "NV", instagram="@twinkicks")])
+    result = dashboard.sync_stores_from_repo()
+    assert result["added"] == 0 and len(ss.tabs["STORES"]) == before
+    names = [r[0] for r in ss.tabs["STORES"]]
+    assert good in names and ss.tabs["STORES"][names.index(good)][1] == "Medellín"       # spelling repaired
+    twins = [r for r in ss.tabs["STORES"] if r[0] == "Twin Kicks"]
+    assert [r[5] for r in twins] == ["", "@twinkicks"] and [r[7] for r in twins] == ["", ""]
+    assert dashboard.sync_stores_from_repo()["updated"] == 0
+
+
+def test_job_api_runs_sync_and_exports_tabs(client, ss, leads_file):
+    import time
+    leads_file([_lead("New Kicks Boutique", "Oakland", "CA", "https://newkicks.com", "@newkicks")])
+    assert client.post("/api/job/start", json={"job": "nonsense"}).status_code == 400
+    assert client.post("/api/job/start", json={"job": "sync", "dry_run": True}).json["success"]
+    for _ in range(50):
+        status = client.get("/api/job/status").json
+        if not status["running"]:
+            break
+        time.sleep(0.05)
+    assert status["name"] == "sync" and status["error"] is None and status["result"]["added"] == 1
+
+    export = client.get("/api/export/stores.csv")
+    assert export.status_code == 200 and export.data.decode().splitlines()[0].startswith("store_name,city,market")
+    assert client.get("/api/export/review.csv").status_code == 200                       # empty tab is fine
+    assert client.get("/api/export/secrets.csv").status_code == 404
+
+
+def test_fix_leads_scrubs_contacts_and_keeps_rows(tmp_path):
+    import csv
+    import super_clean
+    rows = [
+        _lead("House of Drip", "Detroit", "Michigan", "https://houseofdripmi.com/?srsltid=x", "@layer", "9999999999"),
+        _lead("LUXE MIAMI (@luxe.mia)", "Coral Gables", "Florida", "https://www.instagram.com/luxe.mia/?hl=en", "@font"),
+        _lead("Sole Supremacy", "San Jose", "CA", "solesupremacy.com", "@SoleSupremacy", "408-800-4950"),
+    ]
+    for r in rows:
+        r["Score Breakdown"] = "Contact:18/Brand:5/Market:5/Reach:10"
+    path = tmp_path / "leads.csv"
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=LEADS_HEADER); w.writeheader(); w.writerows(rows)
+    super_clean.fix_leads(str(path))
+    out = {r["Store Name"]: r for r in csv.DictReader(open(path, encoding="utf-8"))}
+    assert len(out) == 3
+    drip = out["House of Drip"]
+    assert (drip["Website"], drip["Instagram"], drip["Phone"]) == ("https://houseofdripmi.com/", "", "")
+    assert drip["Score Breakdown"] == "Contact:0/Brand:5/Market:5/Reach:0" and drip["Lead Score"] == "10"
+    luxe = out["LUXE MIAMI (@luxe.mia)"]                                                  # name untouched
+    assert (luxe["Website"], luxe["Instagram"]) == ("", "@luxe.mia")
+    sole = out["Sole Supremacy"]
+    assert (sole["Website"], sole["Instagram"], sole["Phone"]) == \
+        ("https://solesupremacy.com", "@solesupremacy", "(408) 800-4950")

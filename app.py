@@ -13,7 +13,10 @@ being re-synced from the CSV:
     REVIEW         a person's Approve / Reject decision (overrides the flag)
     VERIFICATION   live website / Instagram / phone check results
 
-The only STORES cell the dashboard writes is pipeline_stage when a pitch is sent.
+The dashboard writes STORES in two cases only: pipeline_stage when a pitch is
+sent, and the Sync job, which brings STORES in line with the leads file in this
+deploy (data/godspeed_leads_final.csv) without deleting rows or touching the
+columns the dashboard owns.
 
 Local dev: GODSPEED_LOCAL_DIR=/path/to/csvs (STORES.csv, OUTREACH_LOG.csv, ...)
 reads those files instead of Sheets; writes stay in memory.
@@ -106,8 +109,21 @@ def _records(rows: list[list]) -> tuple[list[str], list[dict]]:
     return headers, out
 
 
+_XLSX_ESCAPE_RE = re.compile(r"_x[0-9A-Fa-f]{4}_")
+
+
+def _ascii_key(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", _XLSX_ESCAPE_RE.sub("", q.s(text)).lower())
+
+
 def store_key(name: str, city: str) -> tuple[str, str]:
-    return store_rules._key(name), store_rules._key(city)
+    """
+    Identity of a store across tabs and the leads file: ASCII letters and digits
+    of its name and city. Everything else is ignored on purpose, so a name that
+    was mangled on its way into the sheet ("MedellÃ\xadn" for "Medellín") still
+    matches the correct spelling.
+    """
+    return _ascii_key(name), _ascii_key(city)
 
 
 def is_customer(s):
@@ -270,7 +286,7 @@ def _next_id(records, id_field, prefix, width=4):
 
 
 def log_outreach(targets: list[dict], channel, message, status="Sent", template_used="",
-                 sent_by="Jordan Belfort"):
+                 sent_by="Goldie"):
     """Append one OUTREACH_LOG event per store; move pipeline_stage to Contacted when sent."""
     data = load_data(force=True)
     ss = sheets.open_spreadsheet()
@@ -292,6 +308,84 @@ def log_outreach(targets: list[dict], channel, message, status="Sent", template_
                 sheets.update_row_cells(ss, STORES_TAB, store["_row"], data["store_headers"],
                                         {"pipeline_stage": "Contacted"})
     invalidate()
+
+
+# ─────────────────────────────────────────  SYNC JOB  (repo CSV -> STORES)
+REPO_LEADS_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "godspeed_leads_final.csv")
+STORES_DEFAULT_HEADERS = [
+    "store_name", "city", "market", "country", "website", "instagram", "email", "phone",
+    "pipeline_stage", "account_status", "last_order_date", "notes", "lead_score",
+    "priority_tier", "score_breakdown",
+]
+# Columns the leads file owns: refreshed from it on every sync.
+REPO_OWNED = {
+    "State": "market", "Country": "country", "Website": "website", "Instagram": "instagram",
+    "Email": "email", "Phone": "phone", "Notes": "notes", "Lead Score": "lead_score",
+    "Priority Tier": "priority_tier", "Score Breakdown": "score_breakdown",
+}
+# Columns the dashboard owns once a store exists (pipeline_stage, account_status,
+# last_order_date, ...). The file only seeds them for a store that is new.
+SEED_ONLY = {"Store Name": "store_name", "City": "city", "Outreach Status": "pipeline_stage",
+             "Last Order Date": "last_order_date"}
+
+
+def sync_stores_from_repo(dry_run: bool = False, progress=None) -> dict:
+    """
+    Bring STORES in line with data/godspeed_leads_final.csv from this deploy.
+
+    Never deletes a row and never touches the columns the dashboard owns, so
+    pipeline stages, account statuses and stores added in the dashboard survive.
+    """
+    with open(REPO_LEADS_CSV, newline="", encoding="utf-8") as f:
+        leads = list(csv.DictReader(f))
+    ss = sheets.open_spreadsheet()
+    rows = sheets.read_tabs(ss, [STORES_TAB])[STORES_TAB]
+    headers = [q.s(h) for h in rows[0]] if rows else list(STORES_DEFAULT_HEADERS)
+    col = {h: i for i, h in enumerate(headers) if h}
+    if "store_name" not in col or "city" not in col:
+        raise RuntimeError(f"{STORES_TAB} has no store_name / city columns — not syncing.")
+    body = [[q.s(c) for c in r] + [""] * (len(headers) - len(r)) for r in rows[1:]]
+    # Rows are matched in order within a key, so two rows that share a name and
+    # city pair up one-to-one instead of fighting over the same sheet row.
+    waiting: dict = {}
+    for r in body:
+        waiting.setdefault(store_key(r[col["store_name"]], r[col["city"]]), []).append(r)
+    in_sheet = sum(len(v) for v in waiting.values())
+
+    updated = added = cells = matched = 0
+    for lead in leads:
+        if not q.s(lead.get("Store Name")):
+            continue
+        queue = waiting.get(store_key(lead["Store Name"], lead.get("City", "")))
+        if not queue:
+            row = [""] * len(headers)
+            for src, dst in {**SEED_ONLY, **REPO_OWNED}.items():
+                if dst in col:
+                    row[col[dst]] = q.s(lead.get(src))
+            body.append(row)
+            added += 1
+            continue
+        row = queue.pop(0)
+        matched += 1
+        changed = 0
+        # name and city only differ by encoding or punctuation here; take the file's spelling
+        for src, dst in {**REPO_OWNED, "Store Name": "store_name", "City": "city"}.items():
+            if dst in col and row[col[dst]] != q.s(lead.get(src)):
+                row[col[dst]] = q.s(lead.get(src))
+                changed += 1
+        if changed:
+            updated += 1
+            cells += changed
+
+    result = {"leads_in_file": matched + added, "stores_in_sheet_before": in_sheet,
+              "added": added, "updated": updated, "cells_changed": cells,
+              "only_in_sheet_kept": in_sheet - matched, "dry_run": dry_run}
+    if not dry_run and (added or updated):
+        if progress:
+            progress(f"Writing {len(body)} stores to {STORES_TAB}…")
+        sheets.replace_tab(ss, STORES_TAB, [headers] + body)
+        invalidate()
+    return result
 
 
 # ─────────────────────────────────────────  VERIFY JOB
@@ -358,16 +452,22 @@ def verify_stores(progress=None, should_stop=None, limit=None) -> dict:
     }
 
 
-def _run_job(limit=None):
+def _run_job(name, limit=None, dry_run=False):
     def progress(message, done=None, total=None):
         job["message"] = message
         if done is not None:
             job["done"], job["total"] = done, total
 
     try:
-        job["result"] = verify_stores(progress, lambda: job["stop"], limit)
-        job["message"] = (f"Done — checked {job['result']['checked']} stores, "
-                          f"found {job['result']['blanks_found']} missing contact details.")
+        if name == "sync":
+            r = job["result"] = sync_stores_from_repo(dry_run, progress)
+            job["message"] = (f"{'Would add' if dry_run else 'Added'} {r['added']} stores, "
+                              f"{'would update' if dry_run else 'updated'} {r['updated']}; "
+                              f"{r['only_in_sheet_kept']} sheet-only stores kept.")
+        else:
+            job["result"] = verify_stores(progress, lambda: job["stop"], limit)
+            job["message"] = (f"Done — checked {job['result']['checked']} stores, "
+                              f"found {job['result']['blanks_found']} missing contact details.")
     except Exception as exc:
         job["error"] = f"{type(exc).__name__}: {exc}"
         job["message"] = "Failed."
@@ -376,14 +476,14 @@ def _run_job(limit=None):
         job["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
 
-def start_job(limit=None) -> bool:
+def start_job(name="verify", limit=None, dry_run=False) -> bool:
     with _job_lock:
         if job["running"]:
             return False
-        job.update(name="verify", running=True, done=0, total=0, error=None, result=None, stop=False,
+        job.update(name=name, running=True, done=0, total=0, error=None, result=None, stop=False,
                    message="Starting…", started_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
                    finished_at=None)
-    threading.Thread(target=_run_job, args=(limit,), daemon=True).start()
+    threading.Thread(target=_run_job, args=(name, limit, dry_run), daemon=True).start()
     return True
 
 
@@ -501,6 +601,25 @@ def export_leads():
     name = f"godspeed-{request.args.get('view', 'qualified')}-leads.csv"
     return Response(buf.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": f"attachment; filename={name}"})
+
+
+EXPORTABLE_TABS = {"stores": STORES_TAB, "outreach": OUTREACH_TAB, "orders": ORDERS_TAB,
+                   "review": REVIEW_TAB, "verification": VERIFY_TAB}
+
+
+@app.route("/api/export/<name>.csv")
+def export_tab(name):
+    """A tab exactly as it is in the sheet (stores, outreach, orders, review, verification)."""
+    tab = EXPORTABLE_TABS.get(name)
+    if not tab:
+        return Response("unknown tab", 404)
+    try:
+        rows = sheets.read_tabs(sheets.open_spreadsheet(), [tab])[tab]
+    except Exception as exc:
+        return Response(f"{type(exc).__name__}: {exc}", 503)
+    buf = io.StringIO()
+    csv.writer(buf).writerows(rows)
+    return Response(buf.getvalue(), mimetype="text/csv")
 
 
 @app.route("/retailers")
@@ -637,8 +756,8 @@ def add_store():
 @app.route("/scraper")
 def scraper():
     state = {"running": False, "status": "queued",
-             "message": "Validated scrape queued — Wilmar gathers, Raj validates on write, "
-                        "Vito scores. Only rows that pass the validation gate are stored."}
+             "message": "Sourcing runs in Claude Code: ask it to find new stores (/add-leads). "
+                        "Only rows that pass the validation gate are stored."}
     return render_template("scraper.html", state=state, error=None)
 
 
@@ -733,8 +852,11 @@ def review():
 @app.route("/api/job/start", methods=["POST"])
 def job_start():
     body = request.get_json(silent=True) or {}
-    if not start_job(limit=body.get("limit")):
-        return jsonify(success=False, error="Verification is already running."), 409
+    name = body.get("job", "verify")
+    if name not in ("verify", "sync"):
+        return jsonify(success=False, error="job must be verify or sync"), 400
+    if not start_job(name, limit=body.get("limit"), dry_run=bool(body.get("dry_run"))):
+        return jsonify(success=False, error=f"A {job['name']} job is already running."), 409
     return jsonify(success=True)
 
 
@@ -752,7 +874,7 @@ def job_status():
 @app.route("/api/scraper/start", methods=["POST"])
 def scraper_start():
     return jsonify({"success": True, "queued": True,
-                    "message": "Validated scrape queued — only rows passing the gate are stored."})
+                    "message": "Sourcing runs in Claude Code — ask it to find new stores (/add-leads)."})
 
 
 @app.route("/api/stats")

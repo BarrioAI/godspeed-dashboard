@@ -229,3 +229,34 @@ def summarize(records: list[dict]) -> dict:
         "hidden_junk_instagram": sum(1 for r in records if any("invalid Instagram" in n for n in r["_cleaning"])),
         "hidden_junk_emails": sum(1 for r in records if any("junk email" in n for n in r["_cleaning"])),
     }
+
+
+# ─────────────────────────────────────────
+#  PERMANENT FIX  (the leads file itself)
+# ─────────────────────────────────────────
+
+CSV_CONTACT_FIELDS = ("Website", "Instagram", "Email", "Phone")
+
+
+def scrub_leads(rows: list[dict]) -> dict:
+    """
+    Clean the contact columns of data/godspeed_leads_final.csv rows in place:
+    fake phones, junk Instagram handles and junk emails are blanked, Instagram
+    profile links move from Website to Instagram, phones get one format.
+    Store names and every other column are left exactly as they are, and no
+    row is removed. Returns counts of what changed.
+    """
+    as_stores = [{"store_name": r.get("Store Name", ""), "city": r.get("City", ""),
+                  "market": r.get("State", ""), "country": r.get("Country", ""),
+                  "website": r.get("Website", ""), "instagram": r.get("Instagram", ""),
+                  "email": r.get("Email", ""), "phone": r.get("Phone", "")} for r in rows]
+    counts = phone_counts(as_stores)
+    changed = Counter()
+    for row, store in zip(rows, as_stores):
+        clean = clean_store(store, counts)
+        for field in CSV_CONTACT_FIELDS:
+            before, after = q.s(row.get(field)), clean[field]
+            if before != after:
+                changed[field + (" cleared" if not after else " filled" if not before else " reformatted")] += 1
+                row[field] = after
+    return dict(sorted(changed.items()))

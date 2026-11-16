@@ -53,6 +53,18 @@
           <button class="btn btn-primary" onclick="startJob(this)" {% if job.running %}disabled{% endif %}>Verify now</button>
         </div>
 
+        <div class="action-row">
+          <div>
+            <strong>Sync from the leads file</strong>
+            <div class="form-hint">
+              Brings STORES in line with <code>data/godspeed_leads_final.csv</code> in this deploy: new
+              stores are added, contact details and scores are refreshed. No row is deleted, and pipeline
+              stages and account statuses are left alone.
+            </div>
+          </div>
+          <button class="btn btn-outline" onclick="startJob(this, 'sync')" {% if job.running %}disabled{% endif %}>Sync</button>
+        </div>
+
         {% include "_job.html" %}
         {% if job.finished_at and not job.running %}
         <div class="form-hint" style="margin-top: 10px;">
