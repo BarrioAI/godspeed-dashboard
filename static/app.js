@@ -52,7 +52,7 @@ async function sendReorder(btn) {
   const store = storeOf(btn);
   if (!confirm(`Log a reorder check-in for ${store.name}?`)) return;
   const data = await postJSON('/api/send-reorder', { row: store.row, store_name: store.name });
-  showToast(data.success ? `✅ ${data.message}` : `❌ ${data.error}`, data.success ? 'success' : 'error');
+  showToast(data.success ? `${data.message}` : `${data.error}`, data.success ? 'success' : 'error');
 }
 
 // ─── BULK SELECT ───
@@ -99,11 +99,11 @@ async function bulkPitch() {
   if (!confirm(`Log an Instagram DM pitch for ${stores.length} store${stores.length === 1 ? '' : 's'}?`)) return;
   const data = await postJSON('/api/bulk-pitch', { stores, channel: 'Instagram DM' });
   if (data.success) {
-    showToast(`✅ ${data.message}`, 'success');
+    showToast(`${data.message}`, 'success');
     stores.forEach(s => markPitched(s.row));
     clearSelection();
   } else {
-    showToast(`❌ ${data.error}`, 'error');
+    showToast(`${data.error}`, 'error');
   }
 }
 
@@ -133,6 +133,13 @@ function openPitchModal(btn) {
   if (btn.dataset.email) add(`email ${btn.dataset.email}`, `mailto:${btn.dataset.email}`);
   if (!links.childNodes.length) links.textContent = 'no Instagram or email on file for this store.';
   document.getElementById('modal-channel').value = handle ? 'Instagram DM' : (btn.dataset.email ? 'Email' : 'Phone');
+  const brands = (btn.dataset.brands || '').split(',').map(b => b.trim()).filter(Boolean);
+  const message = document.getElementById('modal-message');
+  const hint = document.getElementById('modal-message-hint');
+  if (message) message.value = draftPitch(store.name, brands);
+  if (hint) hint.textContent = brands.length
+    ? `Written from what ${store.name} stocks on its own site. Edit it before you send.`
+    : 'Starter message. Edit it before you send.';
   modal.classList.add('show');
 }
 
@@ -162,11 +169,11 @@ async function submitPitch(e) {
     message: document.getElementById('modal-message').value
   });
   if (data.success) {
-    showToast(`✅ ${data.message}`, 'success');
+    showToast(`${data.message}`, 'success');
     markPitched(row);
     closePitchModal();
   } else {
-    showToast(`❌ ${data.error}`, 'error');
+    showToast(`${data.error}`, 'error');
   }
 }
 
@@ -177,10 +184,10 @@ async function reviewStore(btn, decision) {
   const data = await postJSON('/api/review', { row: store.row, store_name: store.name, decision });
   if (!data.success) {
     btn.disabled = false;
-    showToast(`❌ ${data.error}`, 'error');
+    showToast(`${data.error}`, 'error');
     return;
   }
-  showToast(decision === 'approve' ? `✅ ${store.name} added to qualified leads` : `${store.name} rejected`, 'success');
+  showToast(decision === 'approve' ? `${store.name} added to qualified leads` : `${store.name} rejected`, 'success');
   const tr = btn.closest('tr');
   if (tr) tr.remove();
 }
@@ -195,7 +202,7 @@ async function startJob(btn, name = 'verify') {
   const data = await postJSON('/api/job/start', { job: name });
   if (!data.success) {
     if (btn) btn.disabled = false;
-    showToast(`❌ ${data.error}`, 'error');
+    showToast(`${data.error}`, 'error');
     return;
   }
   watchJob();
@@ -229,10 +236,10 @@ async function pollJob() {
     clearInterval(jobTimer);
     jobTimer = null;
     if (data.error) {
-      showToast(`❌ ${data.error}`, 'error');
+      showToast(`${data.error}`, 'error');
       document.querySelectorAll('button[onclick^="startJob"]').forEach(b => (b.disabled = false));
     } else if (onJobDone) {
-      showToast(`✅ ${data.message}`, 'success');
+      showToast(`${data.message}`, 'success');
       setTimeout(onJobDone, 1200);
     }
   }
@@ -260,3 +267,110 @@ document.addEventListener('DOMContentLoaded', () => {
   const panel = document.getElementById('job-panel');
   if (panel && panel.dataset.running === 'true') watchJob();
 });
+
+
+// ─── PITCH DRAFT ───
+// A first message built from the peer brands the store's own site shows.
+function draftPitch(name, brands) {
+  const list = brands.length > 1 ? brands.slice(0, -1).join(', ') + ' and ' + brands[brands.length - 1] : brands[0];
+  const opener = brands.length
+    ? `Hey ${name}, saw you carry ${list}. Godspeed sits right next to those on the rack.`
+    : `Hey ${name}, we're Godspeed, a premium streetwear brand out of New York, and your store looks like the right home for it.`;
+  return `${opener} We're opening a few wholesale accounts in your area. Can I send over the line sheet?`;
+}
+
+// ─── COMMAND BAR (Cmd/Ctrl+K or /) ───
+(function () {
+  const PAGES = [
+    ['Overview', '/'], ['Leads: qualified', '/leads'], ['Leads: A tier', '/leads?tier=A-Tier'],
+    ['Leads: stock peer brands', '/leads?brand=any'], ['Leads: needs review', '/leads?view=review'],
+    ['Leads: contact to check', '/leads?contact=problem'], ['Outreach', '/outreach'], ['Retailers', '/retailers'],
+    ['Orders', '/orders'], ['Data quality', '/quality'], ['Add store', '/add-store'],
+    ['Download call list (CSV)', '/export/leads.csv'],
+  ];
+  let items = [], active = 0, timer = null, seq = 0;
+  const el = id => document.getElementById(id);
+
+  function render() {
+    const box = el('cmd-results');
+    box.textContent = '';
+    items.forEach((item, i) => {
+      const a = document.createElement('a');
+      a.href = item.href;
+      a.className = 'cmd-item' + (i === active ? ' active' : '');
+      const main = document.createElement('span');
+      main.className = 'cmd-main';
+      main.textContent = item.label;
+      const meta = document.createElement('span');
+      meta.className = 'cmd-meta';
+      meta.textContent = item.meta;
+      a.append(main, meta);
+      a.addEventListener('mousemove', () => { if (active !== i) { active = i; render(); } });
+      box.append(a);
+    });
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'cmd-empty';
+      empty.textContent = 'Nothing matches.';
+      box.append(empty);
+    }
+  }
+
+  function pagesFor(q) {
+    return PAGES.filter(p => p[0].toLowerCase().includes(q)).map(p => ({ label: p[0], meta: 'Page', href: p[1] }));
+  }
+
+  function search(q) {
+    q = q.trim().toLowerCase();
+    items = pagesFor(q).slice(0, q ? 4 : 12);
+    active = 0;
+    render();
+    clearTimeout(timer);
+    if (q.length < 2) return;
+    const mine = ++seq;
+    timer = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/search?q=' + encodeURIComponent(q));
+        const data = await res.json();
+        if (mine !== seq) return;
+        const stores = (data.results || []).map(s => ({
+          label: s.name,
+          meta: [s.city, s.state].filter(Boolean).join(', ') + ' · ' +
+            (s.customer ? 'Retailer' : s.bucket === 'qualified' ? `${s.tier || 'C'} tier ${s.score}` : s.bucket),
+          href: '/leads?view=all&q=' + encodeURIComponent(s.name),
+        }));
+        items = stores.concat(pagesFor(q).slice(0, 4));
+        active = 0;
+        render();
+      } catch (e) { /* keep the page results */ }
+    }, 140);
+  }
+
+  function open() {
+    const overlay = el('cmd');
+    if (!overlay) return;
+    overlay.classList.add('show');
+    el('cmd-input').value = '';
+    search('');
+    el('cmd-input').focus();
+  }
+  function close() { const overlay = el('cmd'); if (overlay) overlay.classList.remove('show'); }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!el('cmd')) return;
+    el('cmd-trigger').addEventListener('click', open);
+    el('cmd').addEventListener('click', e => { if (e.target === el('cmd')) close(); });
+    el('cmd-input').addEventListener('input', e => search(e.target.value));
+    el('cmd-input').addEventListener('keydown', e => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); active = Math.min(active + 1, items.length - 1); render(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(active - 1, 0); render(); }
+      else if (e.key === 'Enter' && items[active]) { e.preventDefault(); window.location.href = items[active].href; }
+    });
+    document.addEventListener('keydown', e => {
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target.tagName || ''));
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); open(); }
+      else if (e.key === '/' && !typing) { e.preventDefault(); open(); }
+      else if (e.key === 'Escape') close();
+    });
+  });
+})();

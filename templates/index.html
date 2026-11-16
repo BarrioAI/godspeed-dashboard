@@ -1,47 +1,57 @@
 {% extends "base.html" %}
-{% block title %}Godspeed Retail Intelligence — Overview{% endblock %}
+{% block title %}Overview — Godspeed Wholesale{% endblock %}
 
 {% block content %}
 <div class="container">
 
-  <div class="page-title">⚡ Godspeed Intelligence Unit</div>
-  <div class="page-sub">Welcome back, Goldie 👑 — qualified independent stores for Godspeed's retail expansion</div>
+  <div class="page-head">
+    <div>
+      <div class="page-title">Overview</div>
+      <div class="page-sub">{{ stats.qualified }} independent stores are ready to pitch. {{ stats.top_tier + stats.b_tier }} are A or B tier and {{ stats.with_brands }} already stock brands like yours.</div>
+    </div>
+    <div class="page-actions">
+      <a href="/export/leads.csv" class="btn btn-outline btn-sm">Download call list</a>
+      <a href="/leads" class="btn btn-primary btn-sm">Open leads</a>
+    </div>
+  </div>
 
   {% if error %}
-  <div class="alert alert-danger">
-    ⚠️ Can't reach Google Sheets: {{ error }}
+  <div class="alert alert-danger">Can't reach Google Sheets: {{ error }}</div>
+  {% endif %}
+
+  {% if brief %}
+  <div class="brief">
+    <div class="brief-head"><span class="brief-spark" aria-hidden="true"></span>Today's brief</div>
+    <ol class="brief-list">
+      {% for item in brief %}
+      <li><span class="brief-text">{{ item.text }}</span><a href="{{ item.href }}" class="brief-action">{{ item.action }}</a></li>
+      {% endfor %}
+    </ol>
   </div>
   {% endif %}
 
-  <!-- STAT CARDS -->
   <div class="stats-grid">
-    <a class="stat-card stat-link" href="/leads">
-      <div class="stat-icon">🎯</div>
+    <a class="stat-card stat-link stat-hero" href="/leads">
       <div class="stat-value">{{ stats.qualified }}</div>
-      <div class="stat-label">Qualified Leads</div>
+      <div class="stat-label">Qualified leads</div>
     </a>
     <a class="stat-card stat-link" href="/leads?tier=A-Tier">
-      <div class="stat-icon">🔥</div>
       <div class="stat-value">{{ stats.top_tier }}</div>
-      <div class="stat-label">A-Tier Leads</div>
+      <div class="stat-label">A tier</div>
+    </a>
+    <a class="stat-card stat-link" href="/leads?brand=any">
+      <div class="stat-value">{{ stats.with_brands }}</div>
+      <div class="stat-label">Stock peer brands</div>
     </a>
     <a class="stat-card stat-link" href="/leads?view=review">
-      <div class="stat-icon">🔎</div>
       <div class="stat-value">{{ stats.review }}</div>
-      <div class="stat-label">Need Review</div>
-    </a>
-    <a class="stat-card stat-link" href="/retailers">
-      <div class="stat-icon">🏪</div>
-      <div class="stat-value">{{ stats.retailers }}</div>
-      <div class="stat-label">Current Retailers</div>
+      <div class="stat-label">Need your review</div>
     </a>
     <a class="stat-card stat-link" href="/outreach">
-      <div class="stat-icon">📬</div>
       <div class="stat-value">{{ stats.sent }}</div>
-      <div class="stat-label">Pitches Logged</div>
+      <div class="stat-label">Pitches logged</div>
     </a>
     <a class="stat-card stat-link" href="/outreach">
-      <div class="stat-icon">💬</div>
       <div class="stat-value">{{ stats.replied }}</div>
       <div class="stat-label">Replies</div>
     </a>
@@ -50,56 +60,56 @@
   <div class="two-col-grid">
 
     <div>
-      <!-- TOP LEADS -->
       <div class="card">
-        <div class="card-title"><span>🔥</span> Pitch these next</div>
+        <div class="card-head">
+          <div class="card-title">Pitch these next</div>
+          <a href="/leads" class="card-link">All {{ stats.qualified }}</a>
+        </div>
         {% if top %}
-        <div class="activity-list">
+        <div class="call-list">
           {% for store in top %}
-          <div class="activity-item">
-            <div class="activity-icon">{{ store._score }}</div>
-            <div class="activity-body">
-              <div class="activity-title">{{ store['Store Name'] }}</div>
-              <div class="activity-meta">
+          <div class="call-row">
+            <div class="score-chip tier-{{ (store['Priority Tier'] or 'C')[0]|lower }}" title="{{ store['Priority Tier'] }}">{{ store._score }}</div>
+            <div class="call-body">
+              <div class="call-name">{{ store['Store Name'] }}</div>
+              <div class="call-meta">
                 {{ store.City }}{% if store.State %}, {{ store.State }}{% endif %}
-                {% if store.Instagram %} · {{ store.Instagram }}{% endif %}
+                {% if store.Instagram %}<span class="sep">/</span>{{ store.Instagram }}{% endif %}
+                {% if store.Email %}<span class="sep">/</span>{{ store.Email }}{% endif %}
               </div>
+              {% if store.Brands %}
+              <div class="chips">
+                {% for brand in store.Brands[:5] %}<span class="chip">{{ brand }}</span>{% endfor %}
+                {% if store.Brands|length > 5 %}<span class="chip chip-more">+{{ store.Brands|length - 5 }}</span>{% endif %}
+              </div>
+              {% endif %}
             </div>
             <button class="btn btn-primary btn-sm"
                     onclick="openPitchModal(this)" data-row="{{ store._row }}" data-store="{{ store['Store Name'] }}"
-                    data-instagram="{{ store.Instagram }}" data-email="{{ store.Email }}">📬 Pitch</button>
+                    data-instagram="{{ store.Instagram }}" data-email="{{ store.Email }}"
+                    data-brands="{{ store.Brands[:3]|join(', ') }}" data-city="{{ store.City }}">Pitch</button>
           </div>
           {% endfor %}
         </div>
         {% else %}
-        <div class="empty-state">
-          <div class="empty-icon">🎯</div>
-          <div class="empty-title">No open leads</div>
-        </div>
+        <div class="empty-state"><div class="empty-title">No open leads</div></div>
         {% endif %}
       </div>
 
-      <!-- RECENT ACTIVITY -->
       <div class="card">
-        <div class="card-title"><span>📋</span> Recent Activity</div>
+        <div class="card-head"><div class="card-title">Recent activity</div></div>
         {% if recent %}
         <div class="activity-list">
           {% for item in recent %}
           <div class="activity-item">
-            <div class="activity-icon">
-              {% if item.Channel == 'Instagram DM' %}📷
-              {% elif item.Channel == 'Email' %}📧
-              {% elif item.Channel == 'SMS' %}💬
-              {% else %}📞{% endif %}
-            </div>
             <div class="activity-body">
               <div class="activity-title">
                 {{ item['Store Name'] }}
-                <span class="badge badge-pitched" style="margin-left:8px; font-size:10px;">{{ item.Status or 'Sent' }}</span>
+                <span class="badge badge-pitched">{{ item.Status or 'Sent' }}</span>
               </div>
               <div class="activity-meta">via {{ item.Channel }} · {{ item['Sent At'] }}</div>
               {% if item.Response %}
-              <div class="activity-meta" style="color: #2ECC71; margin-top: 4px;">↩ "{{ item.Response[:60] }}{% if item.Response|length > 60 %}...{% endif %}"</div>
+              <div class="activity-meta reply">↩ "{{ item.Response[:60] }}{% if item.Response|length > 60 %}...{% endif %}"</div>
               {% endif %}
             </div>
           </div>
@@ -107,36 +117,64 @@
         </div>
         {% else %}
         <div class="empty-state">
-          <div class="empty-icon">📭</div>
           <div class="empty-title">No outreach logged yet</div>
-          <p>Log your first pitch from the <a href="/leads" style="color: var(--gold);">Leads page</a></p>
+          <p>Log your first pitch from the <a href="/leads">Leads page</a>.</p>
         </div>
         {% endif %}
       </div>
     </div>
 
-    <!-- RIGHT COLUMN -->
     <div>
       {% if alerts %}
       <div class="card">
-        <div class="card-title"><span>⚠️</span> Reorder Alerts</div>
+        <div class="card-head"><div class="card-title">Reorder alerts</div></div>
         {% for store in alerts %}
-        <div class="alert alert-warning" style="margin-bottom: 8px;">
-          <span>⚠️</span>
+        <div class="alert alert-warning">
           <div style="flex:1;">
             <strong>{{ store['Store Name'] }}</strong> — {{ store.City }}, {{ store.State }}<br>
             <small>Last order: {{ store['Last Order Date'] or 'Unknown' }}</small>
           </div>
           <button class="btn btn-sm btn-outline" onclick="sendReorder(this)"
-                  data-row="{{ store._row }}" data-store="{{ store['Store Name'] }}">Log Reorder</button>
+                  data-row="{{ store._row }}" data-store="{{ store['Store Name'] }}">Log reorder</button>
         </div>
         {% endfor %}
       </div>
       {% endif %}
 
-      <!-- CONTACT COVERAGE -->
       <div class="card">
-        <div class="card-title"><span>📇</span> Contact info on qualified leads</div>
+        <div class="card-head"><div class="card-title">Pipeline</div></div>
+        <div class="funnel">
+          {% for label, value in [('Qualified', stats.qualified), ('Pitched', stats.pitched), ('In talks', stats.in_talks), ('Won', stats.converted)] %}
+          <div class="funnel-step">
+            <div class="funnel-num">{{ value }}</div>
+            <div class="funnel-label">{{ label }}</div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      {% if markets %}
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">Where the best leads are</div>
+          <span class="card-note">A and B tier stores by market</span>
+        </div>
+        {% set top_market = markets[0].best %}
+        {% for m in markets %}
+        <a class="bar-row" href="/leads?state={{ m.name }}" title="{{ m.best }} A or B tier, of {{ m.total }} qualified in {{ m.name }}">
+          <span class="bar-label">{{ m.name }}</span>
+          <span class="bar-track"><span class="bar-fill" style="width: {{ (m.best / top_market * 100)|round(1) }}%;"></span></span>
+          <span class="bar-val">{{ m.best }}</span>
+        </a>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">Ways to reach qualified leads</div>
+          {% if last_checked %}<span class="card-note">Checked {{ last_checked }}</span>{% endif %}
+        </div>
         {% for label, count, pct, verified in [
             ('Instagram', stats.with_ig, stats.pct_ig, stats.verified_ig),
             ('Website', stats.with_web, stats.pct_web, stats.verified_web),
@@ -150,29 +188,9 @@
           <div class="meter-track"><div class="meter-fill" style="width: {{ pct }}%;"></div></div>
         </div>
         {% endfor %}
-        <a href="/quality" class="btn btn-outline btn-sm" style="margin-top: 14px;">Open Data Quality</a>
-      </div>
-
-      <!-- PIPELINE -->
-      <div class="card">
-        <div class="card-title"><span>📊</span> Pipeline</div>
-        {% for label, value in [('Qualified leads', stats.qualified), ('Pitched', stats.pitched), ('In talks', stats.in_talks), ('Won', stats.converted)] %}
-        <div class="meter">
-          <div class="meter-head"><span>{{ label }}</span><span>{{ value }}</span></div>
-          <div class="meter-track"><div class="meter-fill" style="width: {% if stats.qualified %}{{ [(value / stats.qualified * 100)|int, 100]|min }}{% else %}0{% endif %}%;"></div></div>
-        </div>
-        {% endfor %}
-      </div>
-
-      <!-- QUICK ACTIONS -->
-      <div class="card">
-        <div class="card-title"><span>⚡</span> Quick Actions</div>
-        <div style="display: flex; flex-direction: column; gap: 10px;">
-          <a href="/leads" class="btn btn-primary">🎯 View Qualified Leads</a>
-          <a href="/leads?view=review" class="btn btn-outline">🔎 Review Uncertain Stores</a>
-          <a href="/add-store" class="btn btn-outline">➕ Add Store Manually</a>
-          <a href="/orders" class="btn btn-outline">📦 Orders &amp; Commission</a>
-          <a href="/export/leads.csv" class="btn btn-outline">⬇ Download Qualified Leads (CSV)</a>
+        <div class="card-foot">
+          <a href="/leads?contact=problem" class="card-link">{{ stats.needs_look }} need a look</a>
+          <a href="/quality" class="card-link">Data quality</a>
         </div>
       </div>
     </div>

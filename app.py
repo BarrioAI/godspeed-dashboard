@@ -159,6 +159,10 @@ def _build_stores(rows, review_rows, verify_rows) -> tuple[list[str], list[dict]
         rec["_customer"] = is_customer(row)
         rec["Carries Godspeed"] = "Yes" if rec["_customer"] else ""
         rec["_filled"] = []
+        rec["Brands"] = []                             # peer brands seen on the store's own site
+        rec["_godspeed"] = False
+        parts = re.fullmatch(r"Contact:(\d+)/Brand:(\d+)/Market:(\d+)/Reach:(\d+)", q.s(row.get("score_breakdown")))
+        rec["_parts"] = [int(n) for n in parts.groups()] if parts else None
         key = store_key(row["store_name"], row.get("city", ""))
         rec["Review"] = decisions.get(key, "")
 
@@ -179,6 +183,9 @@ def _build_stores(rows, review_rows, verify_rows) -> tuple[list[str], list[dict]
             if check.get("site_mentions"):
                 rec["Notes"] = (rec["Notes"] + " · " if rec["Notes"] else "") + \
                     "Site mentions: " + check["site_mentions"]
+                mentions = [m.strip() for m in check["site_mentions"].split(",") if m.strip()]
+                rec["Brands"] = q.peer_brands(mentions)
+                rec["_godspeed"] = "Godspeed" in mentions
         records.append(rec)
 
     store_rules.annotate(records)
@@ -544,8 +551,44 @@ def index():
             alerts.append(s)
 
     top = sorted((s for s in stores if s["_bucket"] == "qualified" and not s["_customer"]
-                  and s["Outreach Status"] in OPEN_BADGES), key=lambda s: -s["_score"])[:8]
+                  and s["Outreach Status"] in OPEN_BADGES), key=lambda s: -s["_score"])[:10]
+    qualified = [s for s in stores if s["_bucket"] == "qualified" and not s["_customer"]]
+    by_market: dict = {}
+    for s in qualified:
+        m = by_market.setdefault(s["State"] or s["Country"] or "Unknown", {"total": 0, "best": 0})
+        m["total"] += 1
+        m["best"] += s["Priority Tier"] in ("A-Tier", "B-Tier")
+    markets = sorted(({"name": k, **v} for k, v in by_market.items() if v["best"]),
+                     key=lambda m: (-m["best"], -m["total"]))[:8]
+    stats["with_brands"] = sum(1 for s in qualified if s["Brands"])
+    stats["b_tier"] = sum(1 for s in qualified if s["Priority Tier"] == "B-Tier")
+    stats["needs_look"] = sum(1 for s in qualified if has_contact_problem(s))
+    brief = []
+    if top:
+        first = top[0]
+        ways = [w for w, has in (("Instagram", first["Instagram"]), ("email", first["Email"]),
+                                 ("phone", first["Phone"])) if has]
+        brief.append({"text": f"Start with {first['Store Name']} in {first['City']}"
+                              + (f". It stocks {', '.join(first['Brands'][:3])}" if first["Brands"] else "")
+                              + (f" and you can reach it by {' and '.join(ways[:2])}." if ways else "."),
+                      "href": url_for("leads", q=first["Store Name"]), "action": "Open"})
+    open_a = sum(1 for s in qualified if s["Priority Tier"] == "A-Tier" and s["Outreach Status"] in OPEN_BADGES)
+    if open_a:
+        brief.append({"text": f"{open_a} A tier store{'s have' if open_a != 1 else ' has'} not been pitched yet.",
+                      "href": url_for("leads", tier="A-Tier"), "action": "See them"})
+    waiting = sum(1 for s in qualified if s["Outreach Status"] == "Pitched")
+    if waiting:
+        brief.append({"text": f"{waiting} pitched store{'s are' if waiting != 1 else ' is'} waiting on a reply. Follow up.",
+                      "href": url_for("leads", status="pitched"), "action": "Follow up"})
+    if stats["review"]:
+        brief.append({"text": f"{stats['review']} stores need your yes or no before they can be pitched.",
+                      "href": url_for("leads", view="review"), "action": "Review"})
+    if stats["needs_look"]:
+        brief.append({"text": f"{stats['needs_look']} qualified stores have a contact detail to check.",
+                      "href": url_for("leads", contact="problem"), "action": "Check"})
+    checked = [s["_checked_at"] for s in stores if s.get("_checked_at")]
     return render_template("index.html", stats=stats, recent=recent, alerts=alerts, top=top,
+                           markets=markets, brief=brief[:4], last_checked=max(checked)[:10] if checked else "",
                            error=data["error"])
 
 
@@ -576,6 +619,13 @@ def _filter_leads(stores, args):
         out = [s for s in out if not (s["Instagram"] or s["Phone"] or s["Email"])]
     elif contact == "problem":
         out = [s for s in out if has_contact_problem(s)]
+    brand = args.get("brand", "").strip()
+    if brand == "any":
+        out = [s for s in out if s["Brands"]]
+    elif brand == "godspeed":
+        out = [s for s in out if s["_godspeed"]]
+    elif brand:
+        out = [s for s in out if brand in s["Brands"]]
     return sorted(out, key=lambda s: (-s["_score"], s["Store Name"].lower()))
 
 
@@ -615,6 +665,7 @@ def leads():
         counts=counts, view=request.args.get("view", "qualified"), page=page, pages=pages,
         page_url=page_url, view_url=view_url,
         states=sorted({s["State"] for s in prospects if s["State"]}),
+        brands=q.PEER_BRANDS,
         args=request.args, error=data["error"])
 
 
@@ -911,6 +962,22 @@ def job_status():
 def scraper_start():
     return jsonify({"success": True, "queued": True,
                     "message": "Sourcing runs in Claude Code — ask it to find new stores (/add-leads)."})
+
+
+@app.route("/api/search")
+def api_search():
+    """Stores matching ?q= for the command bar: best bucket and score first."""
+    needle = request.args.get("q", "").strip().lower()
+    if len(needle) < 2:
+        return jsonify(results=[])
+    order = {"qualified": 0, "review": 1, "rejected": 2}
+    hits = [s for s in get_stores()[0] if needle in " ".join(
+        (s["Store Name"], s["City"], s["Instagram"], " ".join(s["Brands"]))).lower()]
+    hits.sort(key=lambda s: (order.get(s["_bucket"], 3), -s["_score"]))
+    return jsonify(results=[{
+        "name": s["Store Name"], "city": s["City"], "state": s["State"], "score": s["_score"],
+        "tier": (s["Priority Tier"] or "")[:1], "bucket": s["_bucket"], "customer": s["_customer"],
+    } for s in hits[:8]])
 
 
 @app.route("/api/stats")

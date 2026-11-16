@@ -10,15 +10,23 @@
 {% block content %}
 <div class="container">
 
-  <div class="page-title">🎯 Leads</div>
-  <div class="page-sub">Independent streetwear, sneaker and boutique stores — chains and brand-owned stores are filtered out</div>
+  <div class="page-head">
+    <div>
+      <div class="page-title">Leads</div>
+      <div class="page-sub">Independent streetwear, sneaker and boutique stores, best fit first. Chains and brand-owned stores are filtered out.</div>
+    </div>
+    <div class="page-actions">
+      <a href="{{ url_for('export_leads', **args.to_dict()) }}" class="btn btn-outline btn-sm">Download CSV</a>
+      <a href="/add-store" class="btn btn-primary btn-sm">Add store</a>
+    </div>
+  </div>
 
   {% if error %}
-  <div class="alert alert-danger">⚠️ Can't reach Google Sheets: {{ error }}</div>
+  <div class="alert alert-danger">Can't reach Google Sheets: {{ error }}</div>
   {% endif %}
 
   {% if args.get('added') %}
-  <div class="alert alert-success">✅ Store added.</div>
+  <div class="alert alert-success">Store added.</div>
   {% endif %}
 
   <!-- VIEW TABS -->
@@ -77,16 +85,25 @@
         {% endfor %}
       </select>
     </div>
+    <div class="filter-group">
+      <span class="filter-label">Brands</span>
+      <select name="brand" onchange="this.form.submit()">
+        <option value="">Any</option>
+        <option value="any" {% if args.get('brand') == 'any' %}selected{% endif %}>Stocks peer brands</option>
+        {% for value in brands %}
+        <option value="{{ value }}" {% if args.get('brand') == value %}selected{% endif %}>{{ value }}</option>
+        {% endfor %}
+        <option value="godspeed" {% if args.get('brand') == 'godspeed' %}selected{% endif %}>Site mentions Godspeed</option>
+      </select>
+    </div>
     <button type="submit" class="btn btn-outline btn-sm">Apply</button>
     <a href="/leads?view={{ view }}" class="btn btn-outline btn-sm">Clear</a>
-    <a href="{{ url_for('export_leads', **args.to_dict()) }}" class="btn btn-outline btn-sm" style="margin-left: auto;">⬇ CSV</a>
-    <a href="/add-store" class="btn btn-primary btn-sm">➕ Add Store</a>
   </form>
 
   <!-- BULK ACTION BAR -->
   <div id="bulk-bar" class="bulk-bar">
     <span id="bulk-count" class="bulk-count">0 stores selected</span>
-    <button class="btn btn-primary btn-sm" onclick="bulkPitch()">📬 Log pitch for selected</button>
+    <button class="btn btn-primary btn-sm" onclick="bulkPitch()">Log pitch for selected</button>
     <button class="btn btn-outline btn-sm" onclick="clearSelection()">✕ Clear</button>
   </div>
 
@@ -99,8 +116,7 @@
             <th class="checkbox-col"><input type="checkbox" id="select-all" aria-label="Select all"></th>
             <th>Store</th>
             <th>Location</th>
-            <th>Instagram</th>
-            <th>Phone / Email</th>
+            <th>Reach</th>
             <th>Score</th>
             <th>Status</th>
             <th>Actions</th>
@@ -115,33 +131,53 @@
             <td class="cell-store">
               <strong>{{ store['Store Name'] }}</strong>
               {% if store['Website'] and store['Web Status'] != 'social-link' %}
-              <br><a href="{{ store['Website'] }}" target="_blank" rel="noopener" class="table-link">🌐 {{ store['Website']|replace('https://', '')|replace('http://', '')|replace('www.', '')|truncate(32, true, '…') }}</a>
+              <br><a href="{{ store['Website'] }}" target="_blank" rel="noopener" class="table-link">{{ store['Website']|replace('https://', '')|replace('http://', '')|replace('www.', '')|truncate(32, true, '…') }}</a>
               {{ status_dot(store['Web Status']) }}
+              {% endif %}
+              {% if store.Brands %}
+              <div class="chips" title="Peer brands seen on the store's own website">
+                {% for brand in store.Brands[:5] %}<span class="chip">{{ brand }}</span>{% endfor %}
+                {% if store.Brands|length > 5 %}<span class="chip chip-more" title="{{ store.Brands[5:]|join(', ') }}">+{{ store.Brands|length - 5 }}</span>{% endif %}
+              </div>
               {% endif %}
               {% if store._bucket != 'qualified' and store['Flag Reasons'] %}
               <div class="flag-reason">{{ store['Flag Reasons'] }}</div>
               {% endif %}
               {% if store['Suggested Fixes'] %}
-              <div class="flag-reason flag-fix">💡 {{ store['Suggested Fixes'] }}</div>
+              <div class="flag-reason flag-fix">{{ store['Suggested Fixes'] }}</div>
+              {% endif %}
+              {% if store._godspeed %}
+              <div class="flag-reason flag-fix">Its site mentions Godspeed. Check before pitching cold.</div>
               {% endif %}
             </td>
-            <td>{{ store['City'] or '—' }}{% if store['State'] %}, {{ store['State'] }}{% endif %}
+            <td class="cell-loc">{{ store['City'] or '—' }}{% if store['State'] %}, {{ store['State'] }}{% endif %}
               {% if store['Country'] and store['Country'] != 'USA' %}<br><span class="muted">{{ store['Country'] }}</span>{% endif %}
             </td>
             <td>
               {% if store['Instagram'] %}
               <a href="https://instagram.com/{{ store['Instagram'].lstrip('@') }}" target="_blank" rel="noopener" class="table-link">{{ store['Instagram'] }}</a>
               {{ status_dot(store['IG Status']) }}{% if 'Instagram' in store._filled %}<span class="muted" title="Not in the sheet — found on the store's website"> from site</span>{% endif %}
-              {% else %}<span class="muted">—</span>{% endif %}
-            </td>
-            <td>
+              {% endif %}
+              <div class="reach-line">
               {% if store['Phone'] %}<a href="tel:{{ store['Phone'] }}" class="table-link">{{ store['Phone'] }}</a> {{ status_dot(store['Phone Status']) }}{% if 'Phone' in store._filled %}<span class="muted" title="Not in the sheet — found on the store's website"> from site</span>{% endif %}{% endif %}
               {% if store['Email'] %}{% if store['Phone'] %}<br>{% endif %}<a href="mailto:{{ store['Email'] }}" class="table-link">{{ store['Email'] }}</a>{% endif %}
-              {% if not store['Phone'] and not store['Email'] %}<span class="muted">—</span>{% endif %}
+              </div>
+              {% if not store['Instagram'] and not store['Phone'] and not store['Email'] %}<span class="muted">No contact details</span>{% endif %}
             </td>
             <td>
               {% if store['Priority Tier'] %}
-              <span class="badge tier-{{ store['Priority Tier'][0]|lower }}">{{ store['Priority Tier'] }} · {{ store._score }}</span>
+              <div class="score-cell">
+                <span class="score-chip tier-{{ store['Priority Tier'][0]|lower }}">{{ store._score }}</span>
+                <span class="score-tier">{{ store['Priority Tier']|replace('-Tier', ' tier') }}</span>
+              </div>
+              {% if store._parts %}
+              <div class="score-parts" title="Contact {{ store._parts[0] }} of 30 · Brands {{ store._parts[1] }} of 25 · Market {{ store._parts[2] }} of 25 · Reach {{ store._parts[3] }} of 20">
+                <span style="--v: {{ (store._parts[0] / 30 * 100)|round }}%"></span>
+                <span style="--v: {{ (store._parts[1] / 25 * 100)|round }}%"></span>
+                <span style="--v: {{ (store._parts[2] / 25 * 100)|round }}%"></span>
+                <span style="--v: {{ (store._parts[3] / 20 * 100)|round }}%"></span>
+              </div>
+              {% endif %}
               {% else %}<span class="muted">—</span>{% endif %}
             </td>
             <td>
@@ -152,7 +188,8 @@
               {% if store._bucket == 'qualified' %}
               <button class="btn btn-primary btn-sm" onclick="openPitchModal(this)"
                       data-row="{{ store._row }}" data-store="{{ store['Store Name'] }}"
-                      data-instagram="{{ store['Instagram'] }}" data-email="{{ store['Email'] }}">📬 Pitch</button>
+                      data-instagram="{{ store['Instagram'] }}" data-email="{{ store['Email'] }}"
+                      data-brands="{{ store.Brands[:3]|join(', ') }}" data-city="{{ store['City'] }}">Pitch</button>
               <button class="btn btn-outline btn-sm" title="Remove from qualified leads" onclick="reviewStore(this, 'reject')"
                       data-row="{{ store._row }}" data-store="{{ store['Store Name'] }}">✕</button>
               {% else %}
@@ -182,9 +219,8 @@
   {% else %}
   <div class="card">
     <div class="empty-state">
-      <div class="empty-icon">🎯</div>
       <div class="empty-title">No stores match</div>
-      <p style="margin-bottom: 20px;"><a href="/leads?view={{ view }}" style="color: var(--gold);">Clear filters</a></p>
+      <p><a href="/leads?view={{ view }}">Clear filters</a></p>
     </div>
   </div>
   {% endif %}

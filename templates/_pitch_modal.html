@@ -2,7 +2,7 @@
 <div id="pitch-modal" class="modal-overlay">
   <div class="modal">
     <button class="modal-close" onclick="closePitchModal()">✕</button>
-    <div class="modal-title">📬 Log a pitch</div>
+    <div class="modal-title">Log a pitch</div>
     <div style="color: var(--text-muted); margin-bottom: 6px; font-size: 14px;">
       Pitching: <strong id="modal-store-name" style="color: var(--white);"></strong>
     </div>
@@ -24,7 +24,8 @@
       </div>
       <div class="form-group" style="margin-bottom: 20px;">
         <label for="modal-message">Message</label>
-        <textarea id="modal-message" rows="4">Hey! We're Godspeed — a premium streetwear brand that's the perfect fit for your store. We noticed you carry some of the hottest brands in the game. Mind if we send over our lookbook?</textarea>
+        <textarea id="modal-message" rows="5"></textarea>
+        <div class="form-hint" id="modal-message-hint"></div>
       </div>
       <div style="display: flex; gap: 12px;">
         <button type="submit" class="btn btn-primary" style="flex: 1;">Log Pitch</button>

@@ -4,11 +4,11 @@
 {% block content %}
 <div class="container">
 
-  <div class="page-title">📬 Outreach Log</div>
+  <div class="page-title">Outreach Log</div>
   <div class="page-sub">Full history of all pitches, messages, and responses</div>
 
   {% if error %}
-  <div class="alert alert-warning">⚠️ {{ error }}</div>
+  <div class="alert alert-warning">{{ error }}</div>
   {% endif %}
 
   <!-- FILTERS -->
@@ -80,13 +80,13 @@
             <td>
               {% set ch = entry.Channel or '' %}
               {% if 'instagram' in ch.lower() or 'dm' in ch.lower() %}
-              <span style="color: #E1306C;">📷 {{ ch }}</span>
+              <span style="color: #E1306C;">{{ ch }}</span>
               {% elif 'email' in ch.lower() %}
-              <span style="color: #9B59B6;">📧 {{ ch }}</span>
+              <span style="color: #9B59B6;">{{ ch }}</span>
               {% elif 'sms' in ch.lower() %}
-              <span style="color: #27AE60;">💬 {{ ch }}</span>
+              <span style="color: #27AE60;">{{ ch }}</span>
               {% else %}
-              <span>📞 {{ ch or '—' }}</span>
+              <span>{{ ch or '—' }}</span>
               {% endif %}
             </td>
             <td>
@@ -139,7 +139,6 @@
   {% else %}
   <div class="card">
     <div class="empty-state">
-      <div class="empty-icon">📭</div>
       <div class="empty-title">No outreach logged</div>
       <p style="margin-bottom: 20px;">
         {% if store_filter or channel_filter or date_filter %}

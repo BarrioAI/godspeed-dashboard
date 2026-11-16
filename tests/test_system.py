@@ -604,3 +604,15 @@ def test_refresh_applies_only_what_the_stores_own_site_proves():
     assert any("phone" in item["what"] for item in result["needs_a_look"] if item["store"] == "Quiet Threads")
     again = refresh.apply(leads, checks)                       # nothing left to do the second time
     assert again["changed"] == {}
+
+
+def test_command_search_and_brand_filter(client, ss):
+    hits = client.get("/api/search?q=a").get_json()["results"]
+    assert hits == []                                           # one letter is not a search
+    name = ss.tabs["STORES"][1][0]
+    hits = client.get("/api/search?q=" + name[:4]).get_json()["results"]
+    assert any(h["name"] for h in hits) and {"name", "city", "score", "bucket"} <= set(hits[0])
+    assert client.get("/leads?brand=Hellstar").status_code == 200
+    assert client.get("/leads?brand=any&view=all").status_code == 200
+    home = client.get("/")
+    assert home.status_code == 200 and b"cmd-input" in home.data
