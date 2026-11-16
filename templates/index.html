@@ -19,6 +19,17 @@
   <div class="alert alert-danger">Can't reach Google Sheets: {{ error }}</div>
   {% endif %}
 
+  {% if brief %}
+  <div class="brief">
+    <div class="brief-head"><span class="brief-spark" aria-hidden="true"></span>Today's brief</div>
+    <ol class="brief-list">
+      {% for item in brief %}
+      <li><span class="brief-text">{{ item.text }}</span><a href="{{ item.href }}" class="brief-action">{{ item.action }}</a></li>
+      {% endfor %}
+    </ol>
+  </div>
+  {% endif %}
+
   <div class="stats-grid">
     <a class="stat-card stat-link stat-hero" href="/leads">
       <div class="stat-value">{{ stats.qualified }}</div>
@@ -75,7 +86,8 @@
             </div>
             <button class="btn btn-primary btn-sm"
                     onclick="openPitchModal(this)" data-row="{{ store._row }}" data-store="{{ store['Store Name'] }}"
-                    data-instagram="{{ store.Instagram }}" data-email="{{ store.Email }}">Pitch</button>
+                    data-instagram="{{ store.Instagram }}" data-email="{{ store.Email }}"
+                    data-brands="{{ store.Brands[:3]|join(', ') }}" data-city="{{ store.City }}">Pitch</button>
           </div>
           {% endfor %}
         </div>

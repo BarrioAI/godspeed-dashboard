@@ -188,7 +188,8 @@
               {% if store._bucket == 'qualified' %}
               <button class="btn btn-primary btn-sm" onclick="openPitchModal(this)"
                       data-row="{{ store._row }}" data-store="{{ store['Store Name'] }}"
-                      data-instagram="{{ store['Instagram'] }}" data-email="{{ store['Email'] }}">Pitch</button>
+                      data-instagram="{{ store['Instagram'] }}" data-email="{{ store['Email'] }}"
+                      data-brands="{{ store.Brands[:3]|join(', ') }}" data-city="{{ store['City'] }}">Pitch</button>
               <button class="btn btn-outline btn-sm" title="Remove from qualified leads" onclick="reviewStore(this, 'reject')"
                       data-row="{{ store._row }}" data-store="{{ store['Store Name'] }}">✕</button>
               {% else %}
