@@ -389,43 +389,19 @@ def sync_stores_from_repo(dry_run: bool = False, progress=None) -> dict:
 
 
 # ─────────────────────────────────────────  VERIFY JOB
-job = {"name": None, "running": False, "done": 0, "total": 0, "message": "Not run yet.",
+# 'boot' identifies this server process: if it changes while a caller is waiting
+# on a job, the server restarted and the job's in-memory progress is gone.
+job = {"boot": f"{os.getpid()}-{int(time.time())}",
+       "name": None, "running": False, "done": 0, "total": 0, "message": "Not run yet.",
        "error": None, "started_at": None, "finished_at": None, "stop": False, "result": None}
 _job_lock = threading.Lock()
 
 
-def verify_stores(progress=None, should_stop=None, limit=None) -> dict:
-    """Live-check websites / Instagram / phones for qualified + review stores -> VERIFICATION tab."""
-    import verify
+VERIFY_CHUNK = 40           # stores checked between saves
 
-    data = load_data(force=True)
-    if data["error"]:
-        raise RuntimeError(data["error"])
-    targets = [s for s in data["stores"] if s["_bucket"] != "rejected" or s["_customer"]]
-    targets.sort(key=lambda s: (s["_bucket"] != "qualified", -s["_score"]))
-    if limit:
-        targets = targets[:int(limit)]
-    # Check what the sheet says, not values an earlier run filled in.
-    asked = [dict(s, **{f: "" for f in s["_filled"]}) for s in targets]
 
-    def tick(done, total):
-        if progress:
-            progress(f"Checked {done} of {total} stores…", done, total)
-
-    results = verify.verify_all(asked, progress=tick, should_stop=should_stop)
-
-    # If nearly every site "failed", the problem is this server's network, not
-    # the stores. Saving that would mark good websites as dead.
-    tried = [r for r in results.values() if r.get("web_status") in ("ok", "unreachable")]
-    dead = sum(1 for r in tried if r["web_status"] == "unreachable")
-    if len(tried) >= 5 and dead / len(tried) > 0.6:
-        raise RuntimeError(
-            f"{dead} of {len(tried)} websites failed to load, which points to a network problem "
-            "on the server rather than dead sites. Nothing was saved — try again later.")
-
-    if progress:
-        progress("Saving results…", len(targets), len(targets))
-    ss = sheets.open_spreadsheet()
+def _save_checks(ss, asked: list[dict], results: dict[int, dict]):
+    """Merge one chunk of findings into the VERIFICATION tab."""
     kept = {}
     for old in _records(sheets.read_tabs(ss, [VERIFY_TAB])[VERIFY_TAB])[1]:
         kept[store_key(old.get("store_name", ""), old.get("city", ""))] = old
@@ -437,22 +413,77 @@ def verify_stores(progress=None, should_stop=None, limit=None) -> dict:
             instagram=store["Instagram"], phone=store["Phone"], checked_at=now)
     sheets.replace_tab(ss, VERIFY_TAB, [sheets.VERIFY_HEADERS] + [
         [row.get(h, "") for h in sheets.VERIFY_HEADERS] for row in kept.values()])
-    invalidate()
 
-    found = list(results.values())
+
+def verify_stores(progress=None, should_stop=None, limit=None, recheck=False) -> dict:
+    """
+    Live-check websites / Instagram / phones for qualified + review stores.
+
+    Resumable: results are saved to the VERIFICATION tab every VERIFY_CHUNK
+    stores, and a store whose check is still current is skipped, so a run that
+    is cut short (the server restarting, a stop request) loses at most one
+    chunk and the next run carries on from there. `recheck` re-checks everything.
+    """
+    import verify
+
+    data = load_data(force=True)
+    if data["error"]:
+        raise RuntimeError(data["error"])
+    eligible = [s for s in data["stores"] if s["_bucket"] != "rejected" or s["_customer"]]
+    eligible.sort(key=lambda s: (s["_bucket"] != "qualified", -s["_score"]))
+    targets = eligible if recheck else [s for s in eligible if not s.get("_checked_at")]
+    already = len(eligible) - len(targets)
+    if limit:
+        targets = targets[:int(limit)]
+    # Check what the sheet says, not values an earlier run filled in.
+    asked = [dict(s, **{f: "" for f in s["_filled"]}) for s in targets]
+
+    ss = sheets.open_spreadsheet()
+    found: list[dict] = []
+    stopped = False
+    for start in range(0, len(asked), VERIFY_CHUNK):
+        chunk = asked[start:start + VERIFY_CHUNK]
+
+        def tick(done, total, start=start):
+            if progress:
+                progress(f"Checked {start + done} of {len(asked)} stores…", start + done, len(asked))
+
+        results = verify.verify_all(chunk, progress=tick, should_stop=should_stop)
+
+        # If nearly every site "failed", the problem is this server's network, not
+        # the stores. Saving that would mark good websites as dead.
+        tried = [r for r in results.values() if r.get("web_status") in ("ok", "unreachable")]
+        dead = sum(1 for r in tried if r["web_status"] == "unreachable")
+        if len(tried) >= 5 and dead / len(tried) > 0.6:
+            raise RuntimeError(
+                f"{dead} of {len(tried)} websites failed to load, which points to a network problem "
+                f"on the server rather than dead sites. {len(found)} earlier results were saved; "
+                "this batch was not — try again later.")
+
+        _save_checks(ss, chunk, results)
+        invalidate()
+        found.extend(results.values())
+        if should_stop and should_stop():
+            stopped = True
+            break
+
     return {
         "checked": len(found),
+        "already_verified": already,
+        "remaining": len(eligible) - already - len(found) if not recheck else len(eligible) - len(found),
+        "stopped": stopped,
         "websites_ok": sum(1 for r in found if r["web_status"] == "ok"),
-        "websites_unreachable": dead,
+        "websites_unreachable": sum(1 for r in found if r["web_status"] == "unreachable"),
         "instagram_confirmed": sum(1 for r in found if r["ig_status"].startswith("ok")),
         "instagram_problems": sum(1 for r in found if r["ig_status"] in ("mismatch", "not-found")),
         "instagram_unverified": sum(1 for r in found if r["ig_status"] == "unverified"),
         "phones_confirmed": sum(1 for r in found if r["phone_status"].startswith("ok")),
         "blanks_found": sum(1 for r in found for f in ("found_instagram", "found_phone", "found_email") if r[f]),
+        "suggested_fixes": sum(1 for r in found if r["suggested_fixes"]),
     }
 
 
-def _run_job(name, limit=None, dry_run=False):
+def _run_job(name, limit=None, dry_run=False, recheck=False):
     def progress(message, done=None, total=None):
         job["message"] = message
         if done is not None:
@@ -465,9 +496,10 @@ def _run_job(name, limit=None, dry_run=False):
                               f"{'would update' if dry_run else 'updated'} {r['updated']}; "
                               f"{r['only_in_sheet_kept']} sheet-only stores kept.")
         else:
-            job["result"] = verify_stores(progress, lambda: job["stop"], limit)
-            job["message"] = (f"Done — checked {job['result']['checked']} stores, "
-                              f"found {job['result']['blanks_found']} missing contact details.")
+            r = job["result"] = verify_stores(progress, lambda: job["stop"], limit, recheck)
+            job["message"] = (f"Checked {r['checked']} stores ({r['already_verified']} were already done, "
+                              f"{r['remaining']} left): {r['suggested_fixes']} need a fix, "
+                              f"{r['blanks_found']} missing details found.")
     except Exception as exc:
         job["error"] = f"{type(exc).__name__}: {exc}"
         job["message"] = "Failed."
@@ -476,14 +508,14 @@ def _run_job(name, limit=None, dry_run=False):
         job["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
 
-def start_job(name="verify", limit=None, dry_run=False) -> bool:
+def start_job(name="verify", limit=None, dry_run=False, recheck=False) -> bool:
     with _job_lock:
         if job["running"]:
             return False
         job.update(name=name, running=True, done=0, total=0, error=None, result=None, stop=False,
                    message="Starting…", started_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
                    finished_at=None)
-    threading.Thread(target=_run_job, args=(name, limit, dry_run), daemon=True).start()
+    threading.Thread(target=_run_job, args=(name, limit, dry_run, recheck), daemon=True).start()
     return True
 
 
@@ -704,10 +736,13 @@ def quality_page():
     problems = [s for s in prospects if s["_bucket"] == "qualified" and has_contact_problem(s)]
     review = sorted((s for s in prospects if s["_bucket"] == "review"),
                     key=lambda s: (-s["_score"], s["Store Name"].lower()))
-    verified_any = any(s.get("_checked_at") for s in stores)
+    eligible = [s for s in stores if s["_bucket"] != "rejected" or s["_customer"]]
+    checked = sum(1 for s in eligible if s.get("_checked_at"))
+    verified_any = checked > 0
     return render_template("quality.html", stats=stats, breakdown=breakdown, problems=problems[:100],
                            problem_count=len(problems), review=review[:60], review_count=len(review),
-                           job=job, verified_any=verified_any, error=data["error"])
+                           job=job, verified_any=verified_any, checked=checked, eligible=len(eligible),
+                           error=data["error"])
 
 
 @app.route("/add-store", methods=["GET", "POST"])
@@ -855,7 +890,8 @@ def job_start():
     name = body.get("job", "verify")
     if name not in ("verify", "sync"):
         return jsonify(success=False, error="job must be verify or sync"), 400
-    if not start_job(name, limit=body.get("limit"), dry_run=bool(body.get("dry_run"))):
+    if not start_job(name, limit=body.get("limit"), dry_run=bool(body.get("dry_run")),
+                     recheck=bool(body.get("recheck"))):
         return jsonify(success=False, error=f"A {job['name']} job is already running."), 409
     return jsonify(success=True)
 

@@ -31,15 +31,16 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 )
 TIMEOUT = 10
-MAX_BYTES = 600_000
-WEB_WORKERS = 12
+MAX_BYTES = 250_000       # the header, nav and footer are what we need; keeps memory flat
+WEB_WORKERS = 6
 IG_MIN_INTERVAL = 1.5
 
 _IG_LINK_RE = re.compile(r"instagram\.com/([A-Za-z0-9._]{2,30})(?=[/?\"'\s<&#]|$)", re.I)
 _TEL_RE = re.compile(r"tel:([+\d()\s.\-]{10,20})", re.I)
 _PHONE_TEXT_RE = re.compile(r"(?<![\d.])\(?\b[2-9]\d{2}\)?[\s.\-]{1,2}[2-9]\d{2}[\s.\-]\d{4}\b(?!\d)")
 _MAILTO_RE = re.compile(r"mailto:([^\"'?\s<>]+)", re.I)
-_TAG_RE = re.compile(r"<(script|style)\b.*?</\1>|<[^>]+>", re.S | re.I)
+_BLOCK_RE = re.compile(r"<script\b[^>]*>.*?</script>|<style\b[^>]*>.*?</style>", re.S | re.I)
+_TAG_RE = re.compile(r"<[^>]{0,2000}>")
 
 SITE_EVIDENCE = [label for _, label, _ in q.BRAND_POINTS] + [
     "Godspeed", "Fear of God", "Essentials", "Off-White", "BAPE", "Amiri",
@@ -77,7 +78,8 @@ def fetch_site(url: str, session: requests.Session) -> dict:
         if handle and handle not in handles:
             handles.append(handle)
     phones = []
-    for raw in _TEL_RE.findall(body) + _PHONE_TEXT_RE.findall(_TAG_RE.sub(" ", body)):
+    text = _TAG_RE.sub(" ", _BLOCK_RE.sub(" ", body))
+    for raw in _TEL_RE.findall(body) + _PHONE_TEXT_RE.findall(text):
         digits = q.normalize_phone(raw)
         if digits and digits not in phones:
             phones.append(digits)
@@ -86,7 +88,7 @@ def fetch_site(url: str, session: requests.Session) -> dict:
         email = q.normalize_email(raw)
         if email and email not in emails:
             emails.append(email)
-    text = _TAG_RE.sub(" ", body).lower()
+    text = text.lower()
     out["handles"] = handles[:5]
     out["phones"] = phones[:5]
     out["emails"] = emails[:3]

@@ -47,7 +47,8 @@
               Opens each store's website, confirms the Instagram and phone shown there match the sheet,
               finds missing ones, and checks the site loads. Takes several minutes. Results go to the
               VERIFICATION tab; STORES is not changed.
-              {% if not verified_any %}<br><span style="color: var(--warning);">Not run yet — contact info is format-checked only.</span>{% endif %}
+              <br><span style="color: {{ 'var(--success)' if checked == eligible else 'var(--warning)' }};">{{ checked }} of {{ eligible }} stores checked.</span>
+              It saves as it goes: if it stops early, run it again and it carries on.
             </div>
           </div>
           <button class="btn btn-primary" onclick="startJob(this)" {% if job.running %}disabled{% endif %}>Verify now</button>
