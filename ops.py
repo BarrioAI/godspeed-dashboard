@@ -12,7 +12,8 @@ the dashboard's own API over HTTPS, so nothing has to run on anyone's laptop.
   python ops.py leads --view qualified  # the cleaned, flagged leads view as CSV
   python ops.py sync --dry-run          # what syncing the leads file to STORES would change
   python ops.py sync                    # do it (never deletes rows)
-  python ops.py verify [--limit N]      # run the live website / Instagram check and wait
+  python ops.py verify [--limit N]      # check stores not yet verified, in batches, until none are left
+  python ops.py verify --recheck        # check every store again
 
 Environment:
   GODSPEED_URL        default https://godspeed-dashboard.onrender.com
@@ -44,6 +45,10 @@ def call(method: str, path: str, **kwargs):
     return resp
 
 
+class ServerRestarted(Exception):
+    pass
+
+
 def run_job(name: str, **params) -> dict:
     resp = call("POST", "/api/job/start", json={"job": name, **params})
     if resp.status_code == 404:
@@ -51,10 +56,17 @@ def run_job(name: str, **params) -> dict:
     body = resp.json()
     if not body.get("success"):
         sys.exit(f"Could not start {name}: {body.get('error')}")
+    boot = None
     last = ""
     while True:
         time.sleep(3)
-        status = call("GET", "/api/job/status").json()
+        resp = call("GET", "/api/job/status")
+        if resp.status_code != 200:
+            raise ServerRestarted(f"status returned {resp.status_code}")
+        status = resp.json()
+        boot = boot or status.get("boot")
+        if status.get("boot") != boot or status.get("name") != name:
+            raise ServerRestarted("the dashboard process restarted while the job was running")
         if status["message"] != last:
             last = status["message"]
             print(last, flush=True)
@@ -62,6 +74,55 @@ def run_job(name: str, **params) -> dict:
             if status.get("error"):
                 sys.exit(f"{name} failed: {status['error']}")
             return status.get("result") or {}
+
+
+def wait_until_up(minutes: int = 5):
+    deadline = time.time() + minutes * 60
+    while time.time() < deadline:
+        try:
+            if requests.get(BASE + "/healthz", auth=AUTH, timeout=30).status_code == 200:
+                return
+        except requests.RequestException:
+            pass
+        time.sleep(10)
+    sys.exit(f"{BASE} did not come back within {minutes} minutes.")
+
+
+def verify_all(batch: int, recheck: bool, limit=None) -> dict:
+    """
+    Verify in batches until nothing is left. Each batch is saved on the server
+    as it goes, so a server restart costs one batch at most: wait for it to come
+    back and carry on.
+    """
+    totals: dict = {}
+    restarts = 0
+    done = 0
+    first = True
+    while True:
+        size = min(batch, limit - done) if limit else batch
+        if size <= 0:
+            break
+        try:
+            result = run_job("verify", limit=size, recheck=recheck and first)
+        except ServerRestarted as exc:
+            restarts += 1
+            if restarts > 8:
+                sys.exit(f"Giving up after {restarts} server restarts: {exc}. Results so far are saved.")
+            print(f"[{exc} — waiting for it to come back, then continuing]", flush=True)
+            wait_until_up()
+            first = False
+            continue
+        first = False
+        for key, value in result.items():
+            if isinstance(value, int) and not isinstance(value, bool) and key not in ("remaining", "already_verified"):
+                totals[key] = totals.get(key, 0) + value
+        totals["remaining"] = result.get("remaining", 0)
+        done += result.get("checked", 0)
+        print(f"-- {done} checked this run, {totals['remaining']} left", flush=True)
+        if result.get("checked", 0) == 0 or totals["remaining"] <= 0:
+            break
+    totals["server_restarts"] = restarts
+    return totals
 
 
 def main():
@@ -77,7 +138,9 @@ def main():
     sync = sub.add_parser("sync")
     sync.add_argument("--dry-run", action="store_true")
     verify = sub.add_parser("verify")
-    verify.add_argument("--limit", type=int)
+    verify.add_argument("--limit", type=int, help="stop after this many stores")
+    verify.add_argument("--batch", type=int, default=120, help="stores per server job (default 120)")
+    verify.add_argument("--recheck", action="store_true", help="re-check stores that were already verified")
     args = parser.parse_args()
 
     if args.command == "status":
@@ -104,7 +167,7 @@ def main():
     elif args.command == "sync":
         print(json.dumps(run_job("sync", dry_run=args.dry_run), indent=2))
     elif args.command == "verify":
-        print(json.dumps(run_job("verify", limit=args.limit), indent=2))
+        print(json.dumps(verify_all(args.batch, args.recheck, args.limit), indent=2))
 
 
 if __name__ == "__main__":

@@ -371,11 +371,13 @@ def test_verify_job_writes_only_the_verification_tab(client, ss, site):
     assert waste["_bucket"] == "qualified"                 # the site itself confirmed the fit
     assert "Backdoor" not in " ".join(r[0] for r in ss.tabs["VERIFICATION"])    # rejected rows are skipped
 
-    # a second run keeps earlier results and does not treat found values as sheet values
+    # a second run has nothing left to do; --recheck does everything again and keeps one row per store
     again = dashboard.verify_stores()
-    assert again["checked"] == result["checked"]
+    assert (again["checked"], again["already_verified"], again["remaining"]) == (0, result["checked"], 0)
+    redo = dashboard.verify_stores(recheck=True)
+    assert redo["checked"] == result["checked"]
     assert len(ss.tabs["VERIFICATION"]) == result["checked"] + 1
-    assert sorted(by_name()["Wasteland SF"]["_filled"]) == ["Email", "Phone"]
+    assert sorted(by_name()["Wasteland SF"]["_filled"]) == ["Email", "Phone"]   # found values are not re-read as sheet values
     assert client.get("/quality").status_code == 200 and client.get("/leads").status_code == 200
 
     # once the sheet's value changes, the old check no longer applies
@@ -388,7 +390,7 @@ def test_verify_job_refuses_to_save_a_network_outage(client, ss, site):
     _point_sites(ss, site, {}, default="/missing")         # every site "down"
     with pytest.raises(RuntimeError, match="network problem"):
         dashboard.verify_stores()
-    assert "VERIFICATION" not in ss.tabs
+    assert "VERIFICATION" not in ss.tabs                   # the failed batch was not saved
 
 
 # ── sync: leads file -> STORES ───────────────────────────────────────────────
@@ -509,3 +511,30 @@ def test_fix_leads_scrubs_contacts_and_keeps_rows(tmp_path):
     sole = out["Sole Supremacy"]
     assert (sole["Website"], sole["Instagram"], sole["Phone"]) == \
         ("https://solesupremacy.com", "@solesupremacy", "(408) 800-4950")
+
+
+def test_verify_saves_as_it_goes_and_resumes(client, ss, site, monkeypatch):
+    _point_sites(ss, site, {})
+    monkeypatch.setattr(dashboard, "VERIFY_CHUNK", 3)
+    # a run that is cut off after its first chunk keeps that chunk
+    calls = {"n": 0}
+
+    def stop_after_first_chunk():
+        calls["n"] += 1
+        return True
+
+    first = dashboard.verify_stores(should_stop=stop_after_first_chunk)
+    assert first["stopped"] and 1 <= first["checked"] <= 3
+    saved = len(ss.tabs["VERIFICATION"]) - 1
+    assert saved == first["checked"] and first["remaining"] > 0
+
+    # batches (what `ops.py verify` does) pick up where it stopped, without repeats
+    second = dashboard.verify_stores(limit=4)
+    assert second["already_verified"] == saved and second["checked"] == 4
+    rest = dashboard.verify_stores()
+    assert rest["remaining"] == 0
+    names = [r[0] for r in ss.tabs["VERIFICATION"][1:]]
+    assert len(names) == len(set(names)) == saved + 4 + rest["checked"]
+    assert dashboard.verify_stores()["checked"] == 0
+    status = client.get("/api/job/status").json
+    assert status["boot"]                                            # lets a caller detect a restart
