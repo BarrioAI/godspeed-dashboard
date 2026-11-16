@@ -91,6 +91,8 @@ def by_name():
     ("Joe's Pizza", "Queens", "junk"),
     ("Westland Mall", "Hialeah", "not-a-store"),
     ("10 Dallas Streetwear Brands You Should Be Wearing", "Dallas", "not-a-store"),
+    ("Vale Painting", "Tulsa", "junk"),
+    ("Supreme Trailer Sales | Trailer Sales near Oklahoma City", "Oklahoma City", "junk"),
 ])
 def test_rejects(name, city, expected):
     flag, _ = q.classify({"Store Name": name, "City": city})
@@ -126,9 +128,24 @@ def test_no_signal_goes_to_review_not_rejected():
     ("(305) 482-1100", True), ("+1 305-482-1100", True), (3054821100, True),
     ("1037486289", False), ("1750677234", False), ("9999999999", False), ("305-482-110", False),
     ("(310) 555-1234", False), ("#ERROR!", False), ("No", False),
+    ("(295) 394-3037", False),      # area code that does not exist
+    ("(782) 608-6956", False),      # Nova Scotia, not a US store's number
+    ("(800) 522-4100", True),
 ])
 def test_phone(raw, ok):
     assert bool(q.normalize_phone(raw)) is ok
+
+
+@pytest.mark.parametrize("website,expected", [
+    ("https://www.sos.ks.gov/forms", "not-a-store"),
+    ("https://www.doordash.com/store/supreme-cheesy-breads", "not-a-store"),
+    ("https://www.gamestop.com/store/us/ar/little-rock/6540", "chain"),
+    ("https://www.rhone.com/pages/boca-raton", "mono-brand"),
+])
+def test_website_rejects(website, expected):
+    flag, _ = q.classify({"Store Name": "Corner Streetwear", "City": "Tulsa", "Website": website})
+    assert expected in flag.split("+")
+    assert q.bucket(flag) == "rejected"
 
 
 @pytest.mark.parametrize("raw,handle", [
