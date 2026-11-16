@@ -14,6 +14,9 @@ the dashboard's own API over HTTPS, so nothing has to run on anyone's laptop.
   python ops.py sync                    # do it (never deletes rows)
   python ops.py verify [--limit N]      # check stores not yet verified, in batches, until none are left
   python ops.py verify --recheck        # check every store again
+  python ops.py threads                 # every contacted store: last message, reply, follow-up due
+  python ops.py reply --store "Extra Butter" --text "Send the line sheet" --outcome interested
+  python ops.py pitch --store "Extra Butter" --message "…" --at "2026-11-16 09:30"   # record a message already sent
 
 Environment:
   GODSPEED_URL        default https://godspeed-dashboard.onrender.com
@@ -137,6 +140,24 @@ def main():
     leads.add_argument("-o", "--out")
     sync = sub.add_parser("sync")
     sync.add_argument("--dry-run", action="store_true")
+    sub.add_parser("threads")
+    pitch = sub.add_parser("pitch")
+    pitch.add_argument("--store", required=True)
+    pitch.add_argument("--city", default="")
+    pitch.add_argument("--message", required=True, help="the message that was sent")
+    pitch.add_argument("--channel", default="Email")
+    pitch.add_argument("--at", default="", help="when it was sent, YYYY-MM-DD HH:MM")
+    pitch.add_argument("--kind", default="", help='e.g. "First pitch" or "Follow-up 2"')
+    pitch.add_argument("--sent-by", default="Goldie")
+    reply = sub.add_parser("reply")
+    reply.add_argument("--store", required=True, help="store name as shown in the dashboard")
+    reply.add_argument("--city", default="", help="city, when two stores share a name")
+    reply.add_argument("--text", required=True, help="what the store said")
+    reply.add_argument("--outcome", default="other",
+                       choices=["interested", "line_sheet", "in_talks", "won", "declined", "other"])
+    reply.add_argument("--channel", default="Email")
+    reply.add_argument("--at", default="", help="when they replied, YYYY-MM-DD HH:MM")
+    reply.add_argument("--source", default="Claude Code")
     verify = sub.add_parser("verify")
     verify.add_argument("--limit", type=int, help="stop after this many stores")
     verify.add_argument("--batch", type=int, default=120, help="stores per server job (default 120)")
@@ -164,6 +185,22 @@ def main():
             print(f"{args.out}: {max(resp.text.count(chr(10)) - 1, 0)} rows")
         else:
             sys.stdout.write(resp.text)
+    elif args.command == "threads":
+        print(json.dumps(call("GET", "/api/outreach/threads").json(), indent=2, ensure_ascii=False))
+    elif args.command == "pitch":
+        body = call("POST", "/api/send-pitch", json={
+            "store_name": args.store, "city": args.city, "message": args.message, "channel": args.channel,
+            "sent_at": args.at, "template_used": args.kind, "sent_by": args.sent_by}).json()
+        print(json.dumps(body, indent=2, ensure_ascii=False))
+        if not body.get("success"):
+            sys.exit(1)
+    elif args.command == "reply":
+        body = call("POST", "/api/log-reply", json={
+            "store_name": args.store, "city": args.city, "reply": args.text, "outcome": args.outcome,
+            "channel": args.channel, "replied_at": args.at, "source": args.source}).json()
+        print(json.dumps(body, indent=2, ensure_ascii=False))
+        if not body.get("success"):
+            sys.exit(1)
     elif args.command == "sync":
         print(json.dumps(run_job("sync", dry_run=args.dry_run), indent=2))
     elif args.command == "verify":

@@ -2,7 +2,7 @@
 <div id="pitch-modal" class="modal-overlay">
   <div class="modal">
     <button class="modal-close" onclick="closePitchModal()">✕</button>
-    <div class="modal-title">Log a pitch</div>
+    <div class="modal-title" id="pitch-modal-title">Log a pitch</div>
     <div style="color: var(--text-muted); margin-bottom: 6px; font-size: 14px;">
       Pitching: <strong id="modal-store-name" style="color: var(--white);"></strong>
     </div>
@@ -13,12 +13,14 @@
     <form id="pitch-form">
       <input type="hidden" id="modal-store-input">
       <input type="hidden" id="modal-row-input">
+      <input type="hidden" id="modal-template-input">
       <div class="form-group" style="margin-bottom: 16px;">
         <label for="modal-channel">Channel</label>
         <select id="modal-channel">
           <option value="Instagram DM">Instagram DM</option>
           <option value="Email">Email</option>
           <option value="SMS">SMS</option>
+          <option value="WhatsApp">WhatsApp</option>
           <option value="Phone">Phone Call</option>
         </select>
       </div>

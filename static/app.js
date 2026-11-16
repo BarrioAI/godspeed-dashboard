@@ -136,10 +136,15 @@ function openPitchModal(btn) {
   const brands = (btn.dataset.brands || '').split(',').map(b => b.trim()).filter(Boolean);
   const message = document.getElementById('modal-message');
   const hint = document.getElementById('modal-message-hint');
-  if (message) message.value = draftPitch(store.name, brands);
-  if (hint) hint.textContent = brands.length
+  const touch = Number(btn.dataset.followup || 0);
+  const title = document.getElementById('pitch-modal-title');
+  const template = document.getElementById('modal-template-input');
+  if (title) title.textContent = touch ? 'Log a follow-up' : 'Log a pitch';
+  if (template) template.value = touch ? `Follow-up ${touch}` : 'First pitch';
+  if (message) message.value = touch ? draftFollowUp(store.name, brands) : draftPitch(store.name, brands);
+  if (hint) hint.textContent = touch ? 'Follow-up message. Edit it before you send.' : (brands.length
     ? `Written from what ${store.name} stocks on its own site. Edit it before you send.`
-    : 'Starter message. Edit it before you send.';
+    : 'Starter message. Edit it before you send.');
   modal.classList.add('show');
 }
 
@@ -166,7 +171,8 @@ async function submitPitch(e) {
     row,
     store_name: name,
     channel: document.getElementById('modal-channel').value,
-    message: document.getElementById('modal-message').value
+    message: document.getElementById('modal-message').value,
+    template_used: (document.getElementById('modal-template-input') || {}).value || ''
   });
   if (data.success) {
     showToast(`${data.message}`, 'success');
@@ -268,6 +274,62 @@ document.addEventListener('DOMContentLoaded', () => {
   if (panel && panel.dataset.running === 'true') watchJob();
 });
 
+
+// ─── REPLIES ───
+function openReplyModal(btn) {
+  const modal = document.getElementById('reply-modal');
+  if (!modal) return;
+  const store = storeOf(btn);
+  document.getElementById('reply-store-name').textContent = store.name;
+  document.getElementById('reply-store-input').value = store.name;
+  document.getElementById('reply-row-input').value = store.row;
+  document.getElementById('reply-text').value = '';
+  document.getElementById('reply-outcome').value = 'interested';
+  const channel = document.getElementById('reply-channel');
+  const last = btn.dataset.channel || '';
+  if ([...channel.options].some(o => o.value === last)) channel.value = last;
+  modal.classList.add('show');
+  document.getElementById('reply-text').focus();
+}
+
+function closeReplyModal() {
+  const modal = document.getElementById('reply-modal');
+  if (modal) modal.classList.remove('show');
+}
+
+async function submitReply(e) {
+  e.preventDefault();
+  const row = Number(document.getElementById('reply-row-input').value);
+  const data = await postJSON('/api/log-reply', {
+    row,
+    store_name: document.getElementById('reply-store-input').value,
+    outcome: document.getElementById('reply-outcome').value,
+    channel: document.getElementById('reply-channel').value,
+    reply: document.getElementById('reply-text').value
+  });
+  if (data.success) {
+    showToast(data.message, 'success');
+    closeReplyModal();
+    if (document.querySelector('.reply-quote, [data-followup]')) setTimeout(() => window.location.reload(), 600);
+    document.querySelectorAll(`tr[data-row="${row}"] .status-badge`).forEach(badge => {
+      badge.textContent = data.badge;
+      badge.className = `badge badge-${data.badge.toLowerCase().replace(/ /g, '')} status-badge`;
+    });
+  } else {
+    showToast(data.error, 'error');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.getElementById('reply-form');
+  if (form) form.addEventListener('submit', submitReply);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeReplyModal(); });
+});
+
+function draftFollowUp(name, brands) {
+  const fit = brands.length ? ` It would sit well next to ${brands[0]} in your store.` : '';
+  return `Hey ${name}, following up on my note about Godspeed.${fit} Happy to send the line sheet and wholesale pricing whenever works. Who is the best person to talk to about buying?`;
+}
 
 // ─── PITCH DRAFT ───
 // A first message built from the peer brands the store's own site shows.

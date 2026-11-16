@@ -1,0 +1,42 @@
+<!-- REPLY MODAL -->
+<div id="reply-modal" class="modal-overlay">
+  <div class="modal">
+    <button class="modal-close" onclick="closeReplyModal()" aria-label="Close">✕</button>
+    <div class="modal-title">Log a reply</div>
+    <div style="color: var(--text-muted); margin-bottom: 16px; font-size: 14px;">
+      From: <strong id="reply-store-name" style="color: var(--white);"></strong>
+    </div>
+    <form id="reply-form">
+      <input type="hidden" id="reply-store-input">
+      <input type="hidden" id="reply-row-input">
+      <div class="form-group" style="margin-bottom: 16px;">
+        <label for="reply-outcome">What happened</label>
+        <select id="reply-outcome">
+          <option value="interested">Interested: wants to hear more</option>
+          <option value="line_sheet">Line sheet sent</option>
+          <option value="in_talks">In talks: discussing terms</option>
+          <option value="won">Won: placed a first order</option>
+          <option value="declined">Declined: not a fit</option>
+          <option value="other">Replied, nothing decided</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin-bottom: 16px;">
+        <label for="reply-channel">Where they replied</label>
+        <select id="reply-channel">
+          <option value="Instagram DM">Instagram DM</option>
+          <option value="Email">Email</option>
+          <option value="SMS">SMS</option>
+          <option value="Phone">Phone call</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin-bottom: 20px;">
+        <label for="reply-text">What they said</label>
+        <textarea id="reply-text" rows="4" placeholder="Paste the reply, or a one-line note"></textarea>
+      </div>
+      <div style="display: flex; gap: 12px;">
+        <button type="submit" class="btn btn-primary" style="flex: 1;">Log reply</button>
+        <button type="button" class="btn btn-outline" onclick="closeReplyModal()">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>

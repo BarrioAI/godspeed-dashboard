@@ -293,12 +293,12 @@ def _next_id(records, id_field, prefix, width=4):
 
 
 def log_outreach(targets: list[dict], channel, message, status="Sent", template_used="",
-                 sent_by="Goldie"):
+                 sent_by="Goldie", sent_at=""):
     """Append one OUTREACH_LOG event per store; move pipeline_stage to Contacted when sent."""
     data = load_data(force=True)
     ss = sheets.open_spreadsheet()
     existing = list(data["outreach"])
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    now = sent_at or datetime.now().strftime("%Y-%m-%d %H:%M")
     entries = []
     for store in targets:
         entry = {
@@ -315,6 +315,104 @@ def log_outreach(targets: list[dict], channel, message, status="Sent", template_
                 sheets.update_row_cells(ss, STORES_TAB, store["_row"], data["store_headers"],
                                         {"pipeline_stage": "Contacted"})
     invalidate()
+
+
+FOLLOW_UP_DAYS = 5          # a pitch with no reply after this many days is due a follow-up
+
+# what a reply means  ->  (pipeline_stage to set, sentiment, status shown on the log line)
+REPLY_OUTCOMES = {
+    "interested": ("replied", "Positive", "Replied"),
+    "in_talks": ("in talks", "Positive", "Replied"),
+    "line_sheet": ("line_sheet_sent", "Positive", "Replied"),
+    "won": ("won", "Positive", "Converted"),
+    "declined": ("lost", "Negative", "Declined"),
+    "other": (None, "Neutral", "Replied"),
+}
+
+
+def _when(text: str):
+    text = q.s(text)
+    for fmt, size in (("%Y-%m-%d %H:%M", 16), ("%Y-%m-%d", 10)):
+        try:
+            return datetime.strptime(text[:size], fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def log_reply(store: dict, text: str, outcome: str = "interested", channel: str = "",
+              replied_at: str = "", source: str = "Goldie") -> str:
+    """
+    Record a store's reply: fill it in on the latest unanswered pitch (or add an
+    inbound line when there is none) and move the store's stage. Returns
+    "logged" or "duplicate" (the same reply text is already on file).
+    """
+    if outcome not in REPLY_OUTCOMES:
+        raise ValueError(f"Unknown outcome '{outcome}'.")
+    stage, sentiment, status = REPLY_OUTCOMES[outcome]
+    text = q.s(text).strip()
+    data = load_data(force=True)
+    ss = sheets.open_spreadsheet()
+    mine = [o for o in data["outreach"] if o.get("store_name") == store["_name"]]
+    if text and any(q.s(o.get("reply_text")).strip() == text for o in mine):
+        return "duplicate"
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    reply = {"reply_text": text or f"({status.lower()}, no text recorded)", "reply_at": replied_at or now,
+             "sentiment": sentiment, "status": status}
+    open_pitches = [o for o in mine if o.get("direction", "Outbound") != "Inbound" and not q.s(o.get("reply_text"))]
+    if open_pitches:
+        target = max(open_pitches, key=lambda o: (o.get("sent_at", ""), o["_row"]))
+        headers = [q.s(h) for h in sheets.read_tab(ss, OUTREACH_TAB)[0]]
+        sheets.update_row_cells(ss, OUTREACH_TAB, target["_row"], headers, reply)
+    else:
+        sheets.append_by_header(ss, OUTREACH_TAB, OUTREACH_HEADERS, [{
+            "outreach_id": _next_id(data["outreach"], "outreach_id", "OUT", 5),
+            "store_id": store.get("store_id", ""), "store_name": store["_name"],
+            "channel": channel or "Instagram DM", "direction": "Inbound", "message": "",
+            "sent_at": replied_at or now, "sent_by": source, **reply}])
+    if stage and not store["_customer"]:
+        sheets.update_row_cells(ss, STORES_TAB, store["_row"], data["store_headers"], {"pipeline_stage": stage})
+    invalidate()
+    return "logged"
+
+
+def outreach_threads(stores: list[dict], outreach: list[dict]) -> list[dict]:
+    """One line per store that has been contacted: touches, last reply, and whether a follow-up is due."""
+    by_name = {}
+    for s in stores:
+        by_name.setdefault(s["_name"], s)
+    groups: dict = {}
+    for o in outreach:
+        groups.setdefault(o.get("store_name", ""), []).append(o)
+    today = datetime.now()
+    threads = []
+    for name, entries in groups.items():
+        store = by_name.get(name)
+        sent = sorted((o for o in entries if o.get("direction", "Outbound") != "Inbound"
+                       and o.get("Status", "Sent") not in ("Drafted", "Queued")), key=lambda o: o.get("Sent At", ""))
+        replies = sorted((o for o in entries if o.get("Response", "").strip()),
+                         key=lambda o: o.get("reply_at", "") or o.get("Sent At", ""))
+        last = sent[-1] if sent else None
+        last_reply = replies[-1] if replies else None
+        last_at = _when(last["Sent At"]) if last else None
+        days = (today - last_at).days if last_at else None
+        badge = store["Outreach Status"] if store else "Pitched"
+        answered = bool(last and q.s(last.get("reply_text"))) or bool(last_reply and not last) or \
+            bool(last_reply and last and (last_reply.get("reply_at", "") or "") >= last["Sent At"])
+        waiting = bool(last) and not answered and badge == "Pitched"
+        threads.append({
+            "name": store["Store Name"] if store else name, "_name": name,
+            "row": store["_row"] if store else "", "city": store["City"] if store else "",
+            "state": store["State"] if store else "", "instagram": store["Instagram"] if store else "",
+            "email": store["Email"] if store else "", "brands": store["Brands"] if store else [],
+            "badge": badge, "touches": len(sent),
+            "last_channel": last["Channel"] if last else "", "last_sent": last["Sent At"] if last else "",
+            "days": days, "reply": last_reply["Response"] if last_reply else "",
+            "reply_at": (last_reply.get("reply_at") or "") if last_reply else "",
+            "waiting": waiting, "due": waiting and days is not None and days >= FOLLOW_UP_DAYS,
+        })
+    threads.sort(key=lambda t: (not t["due"], not t["waiting"], -((_when(t["last_sent"]) or today).timestamp())))
+    return threads
 
 
 # ─────────────────────────────────────────  SYNC JOB  (repo CSV -> STORES)
@@ -576,10 +674,15 @@ def index():
     if open_a:
         brief.append({"text": f"{open_a} A tier store{'s have' if open_a != 1 else ' has'} not been pitched yet.",
                       "href": url_for("leads", tier="A-Tier"), "action": "See them"})
-    waiting = sum(1 for s in qualified if s["Outreach Status"] == "Pitched")
-    if waiting:
-        brief.append({"text": f"{waiting} pitched store{'s are' if waiting != 1 else ' is'} waiting on a reply. Follow up.",
-                      "href": url_for("leads", status="pitched"), "action": "Follow up"})
+    threads = outreach_threads(stores, outreach)
+    due = sum(1 for t in threads if t["due"])
+    waiting = sum(1 for t in threads if t["waiting"])
+    if due:
+        brief.insert(0, {"text": f"{due} store{'s have' if due != 1 else ' has'} not replied in {FOLLOW_UP_DAYS} days or more. Send a follow-up.",
+                         "href": url_for("outreach", show="due"), "action": "Follow up"})
+    elif waiting:
+        brief.append({"text": f"{waiting} pitched store{'s are' if waiting != 1 else ' is'} waiting on a reply.",
+                      "href": url_for("outreach", show="waiting"), "action": "Open"})
     if stats["review"]:
         brief.append({"text": f"{stats['review']} stores need your yes or no before they can be pitched.",
                       "href": url_for("leads", view="review"), "action": "Review"})
@@ -737,9 +840,27 @@ def outreach():
     if dfilt:
         log = [o for o in log if dfilt in o["Sent At"]]
     log = sorted(log, key=lambda x: x["Sent At"], reverse=True)
-    channels = ["Email", "Instagram DM", "WhatsApp", "Phone"]
+    channels = ["Email", "Instagram DM", "SMS", "WhatsApp", "Phone"]
+    threads = outreach_threads(data["stores"], data["outreach"])
+    summary = {
+        "stores": len(threads), "waiting": sum(1 for t in threads if t["waiting"]),
+        "due": sum(1 for t in threads if t["due"]), "replied": sum(1 for t in threads if t["reply"]),
+        "won": sum(1 for t in threads if t["badge"] == "Converted"),
+    }
+    summary["reply_rate"] = round(summary["replied"] * 100 / summary["stores"]) if threads else 0
+    show = request.args.get("show", "")
+    if show == "due":
+        threads = [t for t in threads if t["due"]]
+    elif show == "waiting":
+        threads = [t for t in threads if t["waiting"]]
+    elif show == "replied":
+        threads = [t for t in threads if t["reply"]]
+    if sf:
+        threads = [t for t in threads if sf in t["name"].lower() or sf in t["_name"].lower()]
     return render_template("outreach.html", log=log, store_names=store_names, channels=channels,
-                           store_filter=sf, channel_filter=cf, date_filter=dfilt, error=data["error"])
+                           store_filter=sf, channel_filter=cf, date_filter=dfilt, error=data["error"],
+                           threads=threads, summary=summary, show=show,
+                           view=request.args.get("view", "stores"), follow_up_days=FOLLOW_UP_DAYS)
 
 
 @app.route("/orders")
@@ -859,6 +980,21 @@ def _targets(data, items):
     return out
 
 
+def _resolve_store(data: dict, body: dict):
+    """The store a request means: by sheet row + name (the dashboard), or by name and city (ops.py)."""
+    store = find_store(data["stores"], body.get("row"), body.get("store_name", ""))
+    if store or body.get("row"):
+        return store
+    # by name (and city when given): prefer the row already contacted, then the best bucket
+    name, city = _ascii_key(body.get("store_name", "")), _ascii_key(body.get("city", ""))
+    contacted = {o.get("store_name") for o in data["outreach"]}
+    order = {"qualified": 0, "review": 1, "rejected": 2}
+    matches = [s for s in data["stores"] if name and name in (_ascii_key(s["Store Name"]), _ascii_key(s["_name"]))
+               and (not city or _ascii_key(s["City"]) == city)]
+    matches.sort(key=lambda s: (s["_name"] not in contacted, order.get(s["_bucket"], 3), -s["_score"]))
+    return matches[0] if matches else None
+
+
 @app.route("/api/send-pitch", methods=["POST"])
 def send_pitch():
     body = request.get_json(silent=True) or {}
@@ -867,14 +1003,53 @@ def send_pitch():
         data = load_data(force=True)
         if data["error"]:
             return jsonify(success=False, error=data["error"]), 503
-        store = find_store(data["stores"], body.get("row"), body.get("store_name", ""))
+        store = _resolve_store(data, body)
         if not store:
             return jsonify(success=False, error="Store not found — refresh the page and try again."), 404
+        sent_at = q.s(body.get("sent_at"))
+        if sent_at and any(o.get("store_name") == store["_name"] and o.get("sent_at") == sent_at
+                           for o in data["outreach"]):
+            return jsonify(success=True, result="duplicate",
+                           message=f"That message is already logged for {store['Store Name']}")
         log_outreach([store], body.get("channel", "Instagram DM"), body.get("message", ""),
-                     status=status, template_used=body.get("template_used", ""))
-        return jsonify(success=True, message=f"{status} logged for {store['Store Name']}")
+                     status=status, template_used=body.get("template_used", ""),
+                     sent_by=body.get("sent_by") or "Goldie", sent_at=sent_at)
+        return jsonify(success=True, result="logged", message=f"{status} logged for {store['Store Name']}")
     except Exception as exc:
         return jsonify(success=False, error=str(exc)), 500
+
+
+@app.route("/api/log-reply", methods=["POST"])
+def api_log_reply():
+    """Record a store's reply and what it means. Used by the dashboard and by `ops.py reply`."""
+    body = request.get_json(silent=True) or {}
+    try:
+        data = load_data(force=True)
+        if data["error"]:
+            return jsonify(success=False, error=data["error"]), 503
+        store = _resolve_store(data, body)
+        if not store:
+            return jsonify(success=False, error="Store not found — refresh the page and try again."), 404
+        outcome = body.get("outcome", "interested")
+        if outcome not in REPLY_OUTCOMES:
+            return jsonify(success=False, error=f"Unknown outcome '{outcome}'."), 400
+        result = log_reply(store, body.get("reply", ""), outcome, channel=body.get("channel", ""),
+                           replied_at=body.get("replied_at", ""), source=body.get("source", "Goldie"))
+        badge = stage_badge(REPLY_OUTCOMES[outcome][0]) if REPLY_OUTCOMES[outcome][0] else store["Outreach Status"]
+        return jsonify(success=True, result=result, badge=badge,
+                       message=(f"Reply logged for {store['Store Name']}" if result == "logged"
+                                else f"That reply is already logged for {store['Store Name']}"))
+    except Exception as exc:
+        return jsonify(success=False, error=str(exc)), 500
+
+
+@app.route("/api/outreach/threads")
+def api_threads():
+    """Every contacted store with its last touch and reply state (read-only)."""
+    data = load_data()
+    if data["error"]:
+        return jsonify(error=data["error"]), 503
+    return jsonify(threads=outreach_threads(data["stores"], data["outreach"]), follow_up_days=FOLLOW_UP_DAYS)
 
 
 @app.route("/api/bulk-pitch", methods=["POST"])

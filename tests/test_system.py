@@ -616,3 +616,42 @@ def test_command_search_and_brand_filter(client, ss):
     assert client.get("/leads?brand=any&view=all").status_code == 200
     home = client.get("/")
     assert home.status_code == 200 and b"cmd-input" in home.data
+
+
+def test_reply_logging_moves_the_store_and_follow_ups_come_due(client, ss):
+    stores = dashboard.load_data(force=True)["stores"]
+    store = next(s for s in stores if s["_bucket"] == "qualified")
+    name, row = store["Store Name"], store["_row"]
+    assert client.post("/api/send-pitch", json={"row": row, "store_name": name, "channel": "Email",
+                                                 "message": "hello"}).get_json()["success"]
+    threads = client.get("/api/outreach/threads").get_json()["threads"]
+    mine = next(t for t in threads if t["name"] == name)
+    assert mine["waiting"] and not mine["due"] and mine["touches"] == 1
+
+    # the pitch ages past the follow-up window
+    log = ss.tabs["OUTREACH_LOG"]
+    log[-1][log[0].index("sent_at")] = "2020-01-01 09:00"
+    dashboard.invalidate()
+    mine = next(t for t in client.get("/api/outreach/threads").get_json()["threads"] if t["name"] == name)
+    assert mine["due"]
+    assert b"Follow-up due" in client.get("/outreach").data
+
+    body = client.post("/api/log-reply", json={"row": row, "store_name": name, "outcome": "in_talks",
+                                               "reply": "Send the line sheet", "channel": "Email"}).get_json()
+    assert body["success"] and body["result"] == "logged" and body["badge"] == "Replied"
+    again = client.post("/api/log-reply", json={"row": row, "store_name": name, "outcome": "in_talks",
+                                                "reply": "Send the line sheet"}).get_json()
+    assert again["result"] == "duplicate"                       # the Gmail check can run twice safely
+    mine = next(t for t in client.get("/api/outreach/threads").get_json()["threads"] if t["name"] == name)
+    assert mine["reply"] == "Send the line sheet" and not mine["waiting"] and not mine["due"]
+    stores = dashboard.load_data(force=True)["stores"]
+    assert next(s for s in stores if s["_row"] == row)["Outreach Status"] == "Replied"
+    assert client.post("/api/log-reply", json={"row": row, "store_name": name, "outcome": "nonsense"}).status_code == 400
+
+    # a reply with no pitch on file is kept as an inbound line; "won" makes the store a retailer
+    other = next(s for s in stores if s["_bucket"] == "qualified" and s["_row"] != row)
+    won = client.post("/api/log-reply", json={"row": other["_row"], "store_name": other["Store Name"],
+                                              "outcome": "won", "reply": "First order placed"}).get_json()
+    assert won["success"] and won["badge"] == "Converted"
+    stores = dashboard.load_data(force=True)["stores"]
+    assert next(s for s in stores if s["_row"] == other["_row"])["_customer"]

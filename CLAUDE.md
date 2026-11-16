@@ -60,10 +60,24 @@ In Claude Code on the web, the session's environment must allow
 | "Find stores in <market>" | `/add-leads <market>` |
 | "Push it live" | `/sync-leads` |
 | The weekly run (scheduled, or "refresh everything") | `/refresh-leads` |
+| Weekly sourcing: 30 to 40 new stores in the next market | `/source-leads` |
+| "Did anyone reply?" (daily, reads Gmail) | `/check-replies` |
 
 `/refresh-leads` is the standing job: verify → `refresh.py` → validate → merge → sync → report.
 It runs every week as a scheduled Claude Code task and may merge its own pull request when the
 validator and the tests pass. Everything else still waits for Goldie.
+
+## Outreach log
+
+Every message and reply lives in `OUTREACH_LOG`; the Outreach page shows it per store.
+- Goldie logs a pitch or follow-up with the Pitch / Follow up buttons, and a reply with Log reply.
+  The reply's outcome moves the store's stage (interested, line sheet sent, in talks, won, declined).
+- `/check-replies` does the same for email by reading Goldie's Gmail: `python ops.py pitch …` for
+  mail she sent to a store, `python ops.py reply …` for mail a store sent back. Both are safe to
+  repeat. It reads only; it never sends or changes mail.
+- A pitch with no reply after 5 days (`FOLLOW_UP_DAYS` in `app.py`) is "follow-up due" and appears
+  in Today's brief. `python ops.py threads` lists every contacted store with that state.
+- Instagram DMs cannot be read by anything here; those are logged by hand.
 
 ## How a store is ranked
 
