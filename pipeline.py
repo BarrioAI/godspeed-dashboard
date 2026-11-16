@@ -93,10 +93,10 @@ STATUS_WORDS = {
     "contacted": "Pitched", "replied": "Replied", "interested": "Replied",
     "converted": "Converted", "declined": "Declined", "not interested": "Declined",
     "active customer": "Converted", "active": "Converted", "warm": "Replied",
-    "check in": "Converted", "reorder sent": "Converted",
+    "check in": "Not Contacted", "reorder sent": "Converted",
     "research needed": "Not Contacted",
 }
-CUSTOMER_STATUSES = {"active customer", "active", "check in", "converted", "reorder sent"}
+CUSTOMER_STATUSES = {"active customer", "active", "converted", "reorder sent"}
 
 # Scraper leftovers that end up in the Instagram column.
 IG_JUNK = {

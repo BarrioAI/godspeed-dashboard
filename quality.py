@@ -424,6 +424,13 @@ def name_matches_site(row: dict, name: Optional[str] = None) -> Optional[bool]:
     return False
 
 
+# Stores held out by a business decision rather than by a rule. Lower-case
+# names; remove a line and press Rebuild to bring the store back.
+EXCLUDED_STORES = {
+    "backdoor miami": "held out for now — not a confirmed account, Miami is saturated",
+}
+
+
 def classify(row: dict, locations: int = 1) -> tuple[str, list[str]]:
     """
     Returns (flag, reasons). `locations` is how many rows in the database share
@@ -443,6 +450,10 @@ def classify(row: dict, locations: int = 1) -> tuple[str, list[str]]:
             reasons.append(reason)
 
     carries_godspeed = s(row.get("Carries Godspeed")).lower() in ("yes", "true", "1", "y")
+
+    for excluded, why in EXCLUDED_STORES.items():
+        if re.search(r"(?<![a-z0-9])" + re.escape(excluded) + r"(?![a-z0-9])", lname):
+            add("excluded", why)
 
     m = _CHAIN_RE.search(lname)
     if m:

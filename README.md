@@ -63,7 +63,7 @@ Locally:
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
-python -m pytest tests                              # 45 tests, no network or credentials needed
+python -m pytest tests                              # 46 tests, no network or credentials needed
 GODSPEED_DEV_XLSX=export.xlsx python app.py         # run against a downloaded copy of the sheet
 python super_clean.py build                         # preview the clean database as data/master_preview.csv
 python super_clean.py build --apply                 # write the MASTER DATABASE tab

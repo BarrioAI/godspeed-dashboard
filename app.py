@@ -499,6 +499,7 @@ FLAG_LABELS = {
     "not-a-store": "Articles, directories and posts (not stores)",
     "junk": "Not clothing retailers", "mismatch": "Name doesn't match its website",
     "low-fit": "No streetwear signal", "broken-data": "Broken rows",
+    "excluded": "Held out by you",
 }
 
 

@@ -375,3 +375,14 @@ def test_verify_job_refuses_to_save_a_network_outage(client, ss, site):
     with pytest.raises(RuntimeError, match="network problem"):
         dashboard.verify_master()
     assert ss.tabs["MASTER DATABASE"] == snapshot
+
+
+def test_backdoor_miami_is_held_out_and_not_a_retailer():
+    tabs = {"EXISTING RETAILERS": [
+        ["Store Name", "City", "State", "Website", "Instagram", "Email", "Phone", "First Order Date",
+         "Last Order Date", "Reorder Status", "Notes"],
+        ["HELLSTAR - Backdoor Miami", "Miami", "Florida", "https://backdoormia.com/collections/vendors?q=HELLSTAR",
+         "@100", "", "1750677234", "", "", "Check In", ""]]}
+    (rec,), _ = pipeline.build_master(tabs)
+    assert rec["Carries Godspeed"] == "" and rec["Outreach Status"] == "Not Contacted"
+    assert "excluded" in rec["Cleanup Flag"] and q.bucket(rec["Cleanup Flag"]) == "rejected"
