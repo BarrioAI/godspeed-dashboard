@@ -89,6 +89,7 @@ def fix_leads(path: str):
     print("Now run: python scripts/validate_leads.py", path)
 
 
+TOLL_FREE = {"800", "833", "844", "855", "866", "877", "888"}   # platform / head-office lines
 _PHONE_FIX_RE = re.compile(r"Phone: website shows (\(\d{3}\) \d{3}-\d{4})")
 _IG_FIX_RE = re.compile(r"Instagram: website links (@[A-Za-z0-9._]+)")
 
@@ -100,7 +101,8 @@ def apply_verification(verification_csv: str, path: str, changes_out: str | None
     Applied only where the store's name matches its website, so the page that
     was read is known to be the store's and not an article or a directory:
       * a blank Instagram / phone / email is filled with the one the site shows
-      * a phone the site contradicts is replaced with the site's
+      * a phone the site contradicts is replaced with the site's (never with a
+        toll-free number: those are platform or head-office lines)
       * an Instagram handle the site contradicts is replaced only when the
         site's handle itself matches the store's name
     Everything else is left alone and listed as skipped.
@@ -143,6 +145,9 @@ def apply_verification(verification_csv: str, path: str, changes_out: str | None
             skipped.append((row["Store Name"], "name does not match the website, so the page may not be the store's"))
             continue
         for column, value, why in wanted:
+            if column == "Phone" and value[1:4] in TOLL_FREE:
+                skipped.append((row["Store Name"], "website's phone is a toll-free line, not the shop's"))
+                continue
             if column == "Instagram" and q.name_matches_site(
                     {"Instagram": value, "City": row.get("City", "")}, row["Store Name"]) is not True:
                 skipped.append((row["Store Name"], f"website's Instagram {value} does not match the store's name"))

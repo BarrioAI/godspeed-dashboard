@@ -550,6 +550,7 @@ def test_apply_verification_uses_only_the_stores_own_site(tmp_path, capsys):
         _lead("Best Boutiques in Town", "Reno", "NV", "https://citymagazine.com/x"),                     # not its site
         _lead("Fresh Kicks", "Tulsa", "OK", "https://freshkicks.com/", "@freshkicks"),                   # platform IG
         _lead("Changed Since", "Boise", "ID", "https://changedsince.com/", "@changedsince", "(208) 344-1000"),
+        _lead("Valley Threads", "Tampa", "FL", "https://valleythreads.com/", "", "(813) 289-9024"),      # toll-free on site
     ]
     for r in leads:
         r["Score Breakdown"] = "Contact:0/Brand:5/Market:5/Reach:0"
@@ -572,6 +573,8 @@ def test_apply_verification_uses_only_the_stores_own_site(tmp_path, capsys):
         check("Best Boutiques in Town", "Reno", "https://citymagazine.com/x", found_phone="(775) 322-1000"),
         check("Fresh Kicks", "Tulsa", "https://freshkicks.com/", "@freshkicks",
               suggested_fixes="Instagram: website links @shopify, sheet has @freshkicks"),
+        check("Valley Threads", "Tampa", "https://valleythreads.com/", "", "(813) 289-9024",
+              suggested_fixes="Phone: website shows (800) 522-4100, sheet has (813) 289-9024"),
         check("Changed Since", "Boise", "https://changedsince.com/", "@changedsince", "(208) 999-0000",
               suggested_fixes="Phone: website shows (208) 555-0000, sheet has (208) 999-0000"),
     ]
@@ -591,4 +594,5 @@ def test_apply_verification_uses_only_the_stores_own_site(tmp_path, capsys):
     assert out["Fresh Kicks"]["Instagram"] == "@freshkicks"        # @shopify is not this store
     assert out["Changed Since"]["Phone"] == "(208) 344-1000"       # row edited after the check
     assert len(list(csv.DictReader(open(changes, encoding="utf-8")))) == 5
-    assert len(out) == 6
+    assert out["Valley Threads"]["Phone"] == "(813) 289-9024"      # a toll-free line is not the shop
+    assert len(out) == 7
