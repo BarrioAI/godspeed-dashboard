@@ -16,9 +16,8 @@ the VERIFICATION tab is written; STORES is never modified.
 
 --fix is the one mode that rewrites data: it blanks fake phones and junk
 Instagram / email values in the leads file, moves Instagram links out of the
-Website column, and recomputes the Contact and Reach parts of each score (the
-score_leads.py rubric) so that removed junk no longer earns points. Brand and
-Market points are left as scored. No row is deleted.
+Website column, and recomputes each score with the score_leads.py rubric so
+that removed junk no longer earns points. No row is deleted.
 """
 
 from __future__ import annotations
@@ -51,33 +50,37 @@ def _from_csv(path: str):
 LEADS_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "godspeed_leads_final.csv")
 
 
-def fix_leads(path: str):
+def rescore(rows: list[dict]) -> tuple[dict, dict]:
+    """Recompute Lead Score / Priority Tier / Score Breakdown in place. Returns tier counts (before, after)."""
     import score_leads
-    import stores
-
-    with open(path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        header, rows = reader.fieldnames, list(reader)
-    changed = stores.scrub_leads(rows)
-    tiers_before = {t: sum(1 for r in rows if r.get("Priority Tier") == t) for t in ("A-Tier", "B-Tier", "C-Tier")}
+    tiers = ("A-Tier", "B-Tier", "C-Tier")
+    before = {t: sum(1 for r in rows if r.get("Priority Tier") == t) for t in tiers}
     for row in rows:
         score, tier, breakdown = score_leads.score_row(row)
-        # Contact and Reach are recomputed from the row's current contact details
-        # (so junk no longer earns points); Brand and Market stay as scored.
-        old = re.fullmatch(r"Contact:(\d+)/Brand:(\d+)/Market:(\d+)/Reach:(\d+)", row.get("Score Breakdown") or "")
-        new = re.fullmatch(r"Contact:(\d+)/Brand:(\d+)/Market:(\d+)/Reach:(\d+)", breakdown)
-        if old and new:
-            contact, reach = int(new.group(1)), int(new.group(4))
-            brand, market = int(old.group(2)), int(old.group(3))
-            score = contact + brand + market + reach
-            tier = "A-Tier" if score >= 75 else "B-Tier" if score >= 45 else "C-Tier"
-            breakdown = f"Contact:{contact}/Brand:{brand}/Market:{market}/Reach:{reach}"
         row["Lead Score"], row["Priority Tier"], row["Score Breakdown"] = str(score), tier, breakdown
-    tiers_after = {t: sum(1 for r in rows if r.get("Priority Tier") == t) for t in tiers_before}
+    return before, {t: sum(1 for r in rows if r.get("Priority Tier") == t) for t in tiers}
+
+
+def read_leads(path: str) -> tuple[list[str], list[dict]]:
+    with open(path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        return reader.fieldnames, list(reader)
+
+
+def write_leads(path: str, header: list[str], rows: list[dict]):
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=header, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
+
+
+def fix_leads(path: str):
+    import stores
+
+    header, rows = read_leads(path)
+    changed = stores.scrub_leads(rows)
+    tiers_before, tiers_after = rescore(rows)
+    write_leads(path, header, rows)
     print(json.dumps({"file": path, "rows": len(rows), "contact_cells_changed": changed,
                       "tiers_before": tiers_before, "tiers_after": tiers_after}, indent=2))
     print("Now run: python scripts/validate_leads.py", path)

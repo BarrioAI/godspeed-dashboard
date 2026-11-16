@@ -9,7 +9,7 @@ Writes:
 
 Rubric (100 pts max):
   Contact Quality (30): IG +10, Email +12, Phone +8
-  Brand Alignment (25): Supreme +10, Hellstar +10, Godspeed +5  (per non-blank/No/N/A value)
+  Brand Alignment (25): peer brands the store stocks: 1 = 10, 2 = 18, 3+ = 25; Godspeed account +5
   Market Tier (25):     Tier 1 city +25, Tier 2 city +15, else +5
   Outreach Readiness (20): IG+Email +20, IG only +10, Email only +8, neither 0
 
@@ -124,6 +124,35 @@ def normalize_us_row(row: dict) -> dict:
     return out
 
 
+def is_yes(v) -> bool:
+    return str(v or "").strip().lower() in ("yes", "y", "true", "1")
+
+
+def brand_points(row: dict) -> int:
+    """
+    Brand Alignment (25): how many peer brands the store is known to stock
+    (the Brands Carried column, filled from the store's own website, plus the
+    Carries Supreme / Hellstar columns): 1 = 10, 2 = 18, 3 or more = 25.
+    An existing Godspeed account adds 5. Only a clear "Yes" counts; "Unknown"
+    and "Prospect" are not evidence.
+    """
+    import re
+
+    import quality as q
+    names = [n for n in re.split(r"[|,]", str(row.get("Brands Carried") or "")) if n.strip()]
+    if is_yes(row.get("Carries Supreme")):
+        names.append("Supreme")
+    if is_yes(row.get("Carries Hellstar")):
+        names.append("Hellstar")
+    peers = set(q.peer_brands(names))
+    if not peers and is_yes(row.get("Carries Supreme")):
+        peers = {"Supreme"}                       # a person recorded it: counts on its own
+    points = {0: 0, 1: 10, 2: 18}.get(len(peers), 25)
+    if is_yes(row.get("Carries Godspeed")):
+        points += 5
+    return min(points, 25)
+
+
 def score_row(row: dict) -> tuple[int, str, str]:
     has_ig = has_value(row.get("Instagram"))
     has_em = has_value(row.get("Email"))
@@ -131,13 +160,7 @@ def score_row(row: dict) -> tuple[int, str, str]:
 
     contact = (10 if has_ig else 0) + (12 if has_em else 0) + (8 if has_ph else 0)
 
-    brand = 0
-    if has_value(row.get("Carries Supreme")):
-        brand += 10
-    if has_value(row.get("Carries Hellstar")):
-        brand += 10
-    if has_value(row.get("Carries Godspeed")):
-        brand += 5
+    brand = brand_points(row)
 
     market = market_points(row.get("City", ""))
 

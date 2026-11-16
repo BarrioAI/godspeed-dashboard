@@ -281,29 +281,62 @@ def normalize_instagram(raw) -> Optional[str]:
     return handle
 
 
-# Area codes assigned to the United States (geographic + toll-free). Scraped
-# rows often carry made-up numbers; one whose area code does not exist, or
-# belongs to Canada or the Caribbean, is not a US store's phone.
-US_AREA_CODES = frozenset("""
-    201 202 203 205 206 207 208 209 210 212 213 214 215 216 217 218 219 220 223 224 225 227
-    228 229 231 234 235 239 240 248 251 252 253 254 256 260 262 267 269 270 272 274 276 279
-    281 283 301 302 303 304 305 307 308 309 310 312 313 314 315 316 317 318 319 320 321 323
-    324 325 326 327 329 330 331 332 334 336 337 339 341 346 347 350 351 352 353 360 361 363
-    364 369 380 385 386 401 402 404 405 406 407 408 409 410 412 413 414 415 417 419 423 424
-    425 430 432 434 435 440 442 443 445 447 448 458 463 464 469 470 472 475 478 479 480 484
-    500 501 502 503 504 505 507 508 509 510 512 513 515 516 517 518 520 521 522 523 524 525
-    526 527 528 529 530 531 532 533 534 539 540 541 544 551 557 559 561 562 563 564 566 567
-    570 571 572 573 574 575 577 580 582 585 586 588 601 602 603 605 606 607 608 609 610 612
-    614 615 616 617 618 619 620 623 626 628 629 630 631 636 640 641 645 646 650 651 656 657
-    659 660 661 662 667 669 678 680 681 682 686 689 701 702 703 704 706 707 708 712 713 714
-    715 716 717 718 719 720 724 725 726 727 728 730 731 732 734 737 738 740 743 747 748 754
-    757 760 762 763 765 769 770 771 772 773 774 775 779 781 785 786 800 801 802 803 804 805
-    806 808 810 812 813 814 815 816 817 818 820 821 826 828 830 831 832 833 835 838 839 840
-    843 844 845 847 848 850 854 855 856 857 858 859 860 862 863 864 865 866 870 872 877 878
-    888 900 901 903 904 906 907 908 909 910 912 913 914 915 916 917 918 919 920 925 928 929
-    930 931 934 936 937 938 940 941 943 945 947 948 949 951 952 954 956 959 970 971 972 973
-    975 978 979 980 983 984 985 986 989
+# US geographic area codes and the state each belongs to. Scraped rows often
+# carry made-up numbers: one whose area code does not exist, or belongs to
+# Canada or the Caribbean, is not a US store's phone, and one from the wrong
+# state is suspect until the store's own website confirms it (see refresh.py).
+AREA_CODE_STATE = dict(pair.split(":") for pair in """
+    201:NJ 202:DC 203:CT 205:AL 206:WA 207:ME 208:ID 209:CA 210:TX 212:NY 213:CA 214:TX
+    215:PA 216:OH 217:IL 218:MN 219:IN 220:OH 223:PA 224:IL 225:LA 227:MD 228:MS 229:GA
+    231:MI 234:OH 235:MO 239:FL 240:MD 248:MI 251:AL 252:NC 253:WA 254:TX 256:AL 260:IN
+    262:WI 267:PA 269:MI 270:KY 272:PA 274:WI 276:VA 279:CA 281:TX 283:OH 301:MD 302:DE
+    303:CO 304:WV 305:FL 307:WY 308:NE 309:IL 310:CA 312:IL 313:MI 314:MO 315:NY 316:KS
+    317:IN 318:LA 319:IA 320:MN 321:FL 323:CA 324:FL 325:TX 326:OH 327:AR 329:NY 330:OH
+    331:IL 332:NY 334:AL 336:NC 337:LA 339:MA 341:CA 346:TX 347:NY 350:CA 351:MA 352:FL
+    353:WI 360:WA 361:TX 363:NY 364:KY 369:CA 380:OH 385:UT 386:FL 401:RI 402:NE 404:GA
+    405:OK 406:MT 407:FL 408:CA 409:TX 410:MD 412:PA 413:MA 414:WI 415:CA 417:MO 419:OH
+    423:TN 424:CA 425:WA 430:TX 432:TX 434:VA 435:UT 440:OH 442:CA 443:MD 445:PA 447:IL
+    448:FL 458:OR 463:IN 464:IL 469:TX 470:GA 472:NC 475:CT 478:GA 479:AR 480:AZ 484:PA
+    501:AR 502:KY 503:OR 504:LA 505:NM 507:MN 508:MA 509:WA 510:CA 512:TX 513:OH 515:IA
+    516:NY 517:MI 518:NY 520:AZ 530:CA 531:NE 534:WI 539:OK 540:VA 541:OR 551:NJ 557:MO
+    559:CA 561:FL 562:CA 563:IA 564:WA 567:OH 570:PA 571:VA 572:OK 573:MO 574:IN 575:NM
+    580:OK 582:PA 585:NY 586:MI 601:MS 602:AZ 603:NH 605:SD 606:KY 607:NY 608:WI 609:NJ
+    610:PA 612:MN 614:OH 615:TN 616:MI 617:MA 618:IL 619:CA 620:KS 623:AZ 626:CA 628:CA
+    629:TN 630:IL 631:NY 636:MO 640:NJ 641:IA 645:FL 646:NY 650:CA 651:MN 656:FL 657:CA
+    659:AL 660:MO 661:CA 662:MS 667:MD 669:CA 678:GA 680:NY 681:WV 682:TX 686:VA 689:FL
+    701:ND 702:NV 703:VA 704:NC 706:GA 707:CA 708:IL 712:IA 713:TX 714:CA 715:WI 716:NY
+    717:PA 718:NY 719:CO 720:CO 724:PA 725:NV 726:TX 727:FL 728:FL 730:IL 731:TN 732:NJ
+    734:MI 737:TX 738:CA 740:OH 743:NC 747:CA 748:CO 754:FL 757:VA 760:CA 762:GA 763:MN
+    765:IN 769:MS 770:GA 771:DC 772:FL 773:IL 774:MA 775:NV 779:IL 781:MA 785:KS 786:FL
+    801:UT 802:VT 803:SC 804:VA 805:CA 806:TX 808:HI 810:MI 812:IN 813:FL 814:PA 815:IL
+    816:MO 817:TX 818:CA 820:CA 821:SC 826:VA 828:NC 830:TX 831:CA 832:TX 835:PA 838:NY
+    839:SC 840:CA 843:SC 845:NY 847:IL 848:NJ 850:FL 854:SC 856:NJ 857:MA 858:CA 859:KY
+    860:CT 862:NJ 863:FL 864:SC 865:TN 870:AR 872:IL 878:PA 901:TN 903:TX 904:FL 906:MI
+    907:AK 908:NJ 909:CA 910:NC 912:GA 913:KS 914:NY 915:TX 916:CA 917:NY 918:OK 919:NC
+    920:WI 925:CA 928:AZ 929:NY 930:IN 931:TN 934:NY 936:TX 937:OH 938:AL 940:TX 941:FL
+    943:GA 945:TX 947:MI 948:VA 949:CA 951:CA 952:MN 954:FL 956:TX 959:CT 970:CO 971:OR
+    972:TX 973:NJ 975:MO 978:MA 979:TX 980:NC 983:CO 984:NC 985:LA 986:ID 989:MI
 """.split())
+TOLL_FREE_CODES = frozenset({"800", "833", "844", "855", "866", "877", "888"})
+US_AREA_CODES = frozenset(AREA_CODE_STATE) | TOLL_FREE_CODES
+
+# Brands whose presence on a store's own site says "this door sells what
+# Godspeed sells". Generic words (Essentials, Palace, Jordan) are left out, and
+# "Supreme" only counts next to another of these (see peer_brands).
+PEER_BRANDS = [
+    "Hellstar", "Rhude", "Vale Forever", "Denim Tears", "Sp5der", "Gallery Dept",
+    "Fear of God", "Off-White", "BAPE", "Amiri", "Chrome Hearts", "Stussy", "Kith",
+    "Supreme",
+]
+_PEER_BY_KEY = {re.sub(r"[^a-z0-9]", "", b.lower()): b for b in PEER_BRANDS}
+
+
+def peer_brands(names: Iterable[str]) -> list[str]:
+    """The peer brands among `names`, in PEER_BRANDS order. Supreme alone does not count."""
+    found = {_PEER_BY_KEY.get(re.sub(r"[^a-z0-9]", "", s(n).lower())) for n in names} - {None}
+    if found == {"Supreme"}:
+        return []
+    return [b for b in PEER_BRANDS if b in found]
 
 
 def normalize_phone(raw) -> Optional[str]:
@@ -672,7 +705,7 @@ _BRAND_SQUAT_RE = re.compile(
     r"hellstar|sp5der|spider-?hoodie|rhude|valeforever|denimtears|gallerydept|"
     r"chromehearts|essentialshoodie|corteiz|bapehoodie|trapstar|syna-?world")
 _PLACE_RE = re.compile(
-    r"(?<![a-z])(?:mall|shopping center|shopping centre|outlets|town center|"
+    r"(?<![a-z])(?:mall|shops at|shopping center|shopping centre|outlets|town center|"
     r"tourism|chamber of commerce|visitors bureau|farmers market|flea market)(?![a-z])")
 _CAPTION_RE = re.compile(r"(?i)\bdm (?:me|us)\b|!!!|#\w+.*#\w+|\blink in bio\b")
 

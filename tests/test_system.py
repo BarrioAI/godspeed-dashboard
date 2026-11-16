@@ -522,7 +522,7 @@ def test_fix_leads_scrubs_contacts_and_keeps_rows(tmp_path):
     assert len(out) == 3
     drip = out["House of Drip"]
     assert (drip["Website"], drip["Instagram"], drip["Phone"]) == ("https://houseofdripmi.com/", "", "")
-    assert drip["Score Breakdown"] == "Contact:0/Brand:5/Market:5/Reach:0" and drip["Lead Score"] == "10"
+    assert drip["Score Breakdown"] == "Contact:0/Brand:0/Market:5/Reach:0" and drip["Lead Score"] == "5"
     luxe = out["LUXE MIAMI (@luxe.mia)"]                                                  # name untouched
     assert (luxe["Website"], luxe["Instagram"]) == ("", "@luxe.mia")
     sole = out["Sole Supremacy"]
@@ -555,3 +555,52 @@ def test_verify_saves_as_it_goes_and_resumes(client, ss, site, monkeypatch):
     assert dashboard.verify_stores()["checked"] == 0
     status = client.get("/api/job/status").json
     assert status["boot"]                                            # lets a caller detect a restart
+
+
+# ── weekly refresh: verification evidence -> leads file ──────────────────────
+
+def _check(name, city, website, instagram="", phone="", **found):
+    row = {"store_name": name, "city": city, "website": website, "instagram": instagram, "phone": phone,
+           "web_status": "ok", "ig_status": "", "phone_status": "format-ok", "found_instagram": "",
+           "found_phone": "", "found_email": "", "site_mentions": "", "suggested_fixes": ""}
+    row.update(found)
+    return row
+
+
+def test_refresh_applies_only_what_the_stores_own_site_proves():
+    import refresh
+    import score_leads
+    leads = [
+        _lead("Corner Kicks", "Austin", "Texas", "https://cornerkicks.com", "@amos_the_frenchie", "(202) 349-6374"),
+        _lead("Quiet Threads", "Tulsa", "Oklahoma", "https://quietthreads.com"),
+        _lead("Drip Clothing", "Little Rock", "Arkansas", "https://www.parkplazamall.com/stores/drip-clothing/"),
+        _lead("Far Away Supply", "Miami", "Florida", "https://farawaysupply.com", phone="(206) 784-6374"),
+    ]
+    for lead in leads:
+        lead.update({"Country": "USA", "Email": "", "Brands Carried": "", "Carries Hellstar": "", "Carries Supreme": ""})
+    checks = [
+        _check("Corner Kicks", "Austin", "https://cornerkicks.com", "@amos_the_frenchie", "(202) 349-6374",
+               site_mentions="Hellstar, Sp5der, Supreme, Jordan",
+               suggested_fixes="Instagram: website links @cornerkicksatx, sheet has @amos_the_frenchie; "
+                               "Phone: website shows (512) 732-0188, sheet has (202) 349-6374"),
+        _check("Quiet Threads", "Tulsa", "https://quietthreads.com", found_instagram="@shopify",
+               found_phone="(800) 522-4100", found_email="hello@quietthreads.com", site_mentions="Supreme"),
+        _check("Drip Clothing", "Little Rock", "https://www.parkplazamall.com/stores/drip-clothing/",
+               found_instagram="@parkplazamall", found_phone="(501) 664-4956", site_mentions="Hellstar"),
+        _check("Far Away Supply", "Miami", "https://farawaysupply.com", phone="(206) 784-6374"),
+    ]
+    result = refresh.apply(leads, checks)
+    kicks, quiet, drip, far = leads
+    assert (kicks["Phone"], kicks["Instagram"]) == ("(512) 732-0188", "@cornerkicksatx")
+    assert kicks["Brands Carried"] == "Hellstar, Sp5der, Supreme" and kicks["Carries Hellstar"] == "Yes"
+    assert score_leads.brand_points(kicks) == 25
+    # platform handle and toll-free number are not the store's; "Supreme" alone is not evidence
+    assert (quiet["Instagram"], quiet["Phone"], quiet["Email"]) == ("", "", "hello@quietthreads.com")
+    assert quiet["Brands Carried"] == "" and score_leads.brand_points(quiet) == 0
+    # a mall's page says nothing about the store listed on it
+    assert (drip["Instagram"], drip["Phone"], drip["Brands Carried"]) == ("", "", "")
+    # Seattle number on a Miami store that its site does not show
+    assert far["Phone"] == ""
+    assert any("phone" in item["what"] for item in result["needs_a_look"] if item["store"] == "Quiet Threads")
+    again = refresh.apply(leads, checks)                       # nothing left to do the second time
+    assert again["changed"] == {}
