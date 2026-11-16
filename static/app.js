@@ -3,111 +3,77 @@
    Frontend JS
    =================================== */
 
-// ─── TOAST NOTIFICATIONS ───
+// ─── TOASTS ───
 function showToast(message, type = 'default') {
-  const container = document.getElementById('toast-container') || createToastContainer();
+  let container = document.getElementById('toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toast-container';
+    container.className = 'toast-container';
+    document.body.appendChild(container);
+  }
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
   toast.textContent = message;
   container.appendChild(toast);
-  setTimeout(() => toast.remove(), 4000);
+  setTimeout(() => toast.remove(), 4500);
 }
 
-function createToastContainer() {
-  const div = document.createElement('div');
-  div.id = 'toast-container';
-  div.className = 'toast-container';
-  document.body.appendChild(div);
-  return div;
-}
-
-// ─── SEND PITCH ───
-async function sendPitch(storeName) {
-  const channel = 'Instagram DM';
-  const message = `Hey! We're Godspeed — a premium streetwear brand that's the perfect fit for your store. We noticed you carry some of the hottest brands in the game. Mind if we send over our lookbook?`;
-
-  const confirmed = confirm(`Send pitch to ${storeName} via ${channel}?`);
-  if (!confirmed) return;
-
+async function postJSON(url, body) {
   try {
-    const res = await fetch('/api/send-pitch', {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ store_name: storeName, channel, message })
+      body: JSON.stringify(body || {})
     });
-
-    const data = await res.json();
-    if (data.success) {
-      showToast(`✅ Pitch sent to ${storeName}`, 'success');
-      // Update status badge in table
-      const badge = document.querySelector(`[data-store="${storeName}"] .status-badge`);
-      if (badge) {
-        badge.className = 'badge badge-pitched';
-        badge.textContent = 'Pitched';
-      }
-    } else {
-      showToast(`❌ Error: ${data.error}`, 'error');
-    }
+    const data = await res.json().catch(() => ({ success: false, error: `Server error (${res.status})` }));
+    return data;
   } catch (e) {
-    showToast(`❌ Network error`, 'error');
+    return { success: false, error: 'Network error — check your connection' };
   }
 }
 
-// ─── SEND REORDER ───
-async function sendReorder(storeName) {
-  const channel = 'Email';
-  const message = `Hey! Just checking in — ready to restock Godspeed? Let us know what quantities you need and we'll get it shipped ASAP.`;
+// A store is identified by its sheet row + name (names alone are not unique).
+function storeOf(el) {
+  return { row: Number(el.dataset.row), name: el.dataset.store };
+}
 
-  const confirmed = confirm(`Send reorder message to ${storeName}?`);
-  if (!confirmed) return;
-
-  try {
-    const res = await fetch('/api/send-reorder', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ store_name: storeName, channel, message })
-    });
-
-    const data = await res.json();
-    if (data.success) {
-      showToast(`✅ Reorder request sent to ${storeName}`, 'success');
-    } else {
-      showToast(`❌ Error: ${data.error}`, 'error');
+function markPitched(row) {
+  document.querySelectorAll(`tr[data-row="${row}"] .status-badge`).forEach(badge => {
+    if (['Not Contacted', 'New Lead'].includes(badge.textContent.trim())) {
+      badge.className = 'badge badge-pitched status-badge';
+      badge.textContent = 'Pitched';
     }
-  } catch (e) {
-    showToast(`❌ Network error`, 'error');
-  }
+  });
+}
+
+// ─── REORDER ───
+async function sendReorder(btn) {
+  const store = storeOf(btn);
+  if (!confirm(`Log a reorder check-in for ${store.name}?`)) return;
+  const data = await postJSON('/api/send-reorder', { row: store.row, store_name: store.name });
+  showToast(data.success ? `✅ ${data.message}` : `❌ ${data.error}`, data.success ? 'success' : 'error');
 }
 
 // ─── BULK SELECT ───
-let selectedStores = new Set();
+const selectedStores = new Map();   // row -> name
 
 function initBulkSelect() {
   const selectAll = document.getElementById('select-all');
   if (!selectAll) return;
 
-  selectAll.addEventListener('change', (e) => {
-    const checkboxes = document.querySelectorAll('.store-checkbox');
-    checkboxes.forEach(cb => {
-      cb.checked = e.target.checked;
-      if (e.target.checked) {
-        selectedStores.add(cb.dataset.store);
-      } else {
-        selectedStores.clear();
-      }
-    });
+  const toggle = (cb, on) => {
+    cb.checked = on;
+    if (on) selectedStores.set(cb.dataset.row, cb.dataset.store);
+    else selectedStores.delete(cb.dataset.row);
+  };
+
+  selectAll.addEventListener('change', e => {
+    document.querySelectorAll('.store-checkbox').forEach(cb => toggle(cb, e.target.checked));
     updateBulkBar();
   });
-
   document.querySelectorAll('.store-checkbox').forEach(cb => {
-    cb.addEventListener('change', (e) => {
-      if (e.target.checked) {
-        selectedStores.add(e.target.dataset.store);
-      } else {
-        selectedStores.delete(e.target.dataset.store);
-      }
-      updateBulkBar();
-    });
+    cb.addEventListener('change', e => { toggle(cb, e.target.checked); updateBulkBar(); });
   });
 }
 
@@ -115,55 +81,58 @@ function updateBulkBar() {
   const bar = document.getElementById('bulk-bar');
   const count = document.getElementById('bulk-count');
   if (!bar || !count) return;
+  bar.classList.toggle('show', selectedStores.size > 0);
+  count.textContent = `${selectedStores.size} store${selectedStores.size === 1 ? '' : 's'} selected`;
+}
 
-  if (selectedStores.size > 0) {
-    bar.classList.add('show');
-    count.textContent = `${selectedStores.size} store${selectedStores.size > 1 ? 's' : ''} selected`;
-  } else {
-    bar.classList.remove('show');
-  }
+function clearSelection() {
+  selectedStores.clear();
+  document.querySelectorAll('.store-checkbox').forEach(cb => (cb.checked = false));
+  const all = document.getElementById('select-all');
+  if (all) all.checked = false;
+  updateBulkBar();
 }
 
 async function bulkPitch() {
   if (selectedStores.size === 0) return;
-
-  const stores = Array.from(selectedStores);
-  const confirmed = confirm(`Send pitch to ${stores.length} stores?`);
-  if (!confirmed) return;
-
-  try {
-    const res = await fetch('/api/bulk-pitch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        stores: stores,
-        channel: 'Instagram DM',
-        message: `Hey! We're Godspeed — a premium streetwear brand that's the perfect fit for your store. Mind if we send over our lookbook?`
-      })
-    });
-
-    const data = await res.json();
-    if (data.success) {
-      showToast(`✅ Bulk pitch sent to ${stores.length} stores`, 'success');
-      selectedStores.clear();
-      updateBulkBar();
-      // Uncheck all
-      document.querySelectorAll('.store-checkbox').forEach(cb => cb.checked = false);
-      document.getElementById('select-all').checked = false;
-    } else {
-      showToast(`❌ Error: ${data.error}`, 'error');
-    }
-  } catch (e) {
-    showToast(`❌ Network error`, 'error');
+  const stores = Array.from(selectedStores, ([row, name]) => ({ row: Number(row), name }));
+  if (!confirm(`Log an Instagram DM pitch for ${stores.length} store${stores.length === 1 ? '' : 's'}?`)) return;
+  const data = await postJSON('/api/bulk-pitch', { stores, channel: 'Instagram DM' });
+  if (data.success) {
+    showToast(`✅ ${data.message}`, 'success');
+    stores.forEach(s => markPitched(s.row));
+    clearSelection();
+  } else {
+    showToast(`❌ ${data.error}`, 'error');
   }
 }
 
 // ─── PITCH MODAL ───
-function openPitchModal(storeName) {
+function openPitchModal(btn) {
   const modal = document.getElementById('pitch-modal');
   if (!modal) return;
-  document.getElementById('modal-store-name').textContent = storeName;
-  document.getElementById('modal-store-input').value = storeName;
+  const store = storeOf(btn);
+  document.getElementById('modal-store-name').textContent = store.name;
+  document.getElementById('modal-store-input').value = store.name;
+  document.getElementById('modal-row-input').value = store.row;
+
+  const links = document.getElementById('modal-links');
+  links.textContent = '';
+  const add = (label, href) => {
+    const a = document.createElement('a');
+    a.textContent = label;
+    a.href = href;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.className = 'table-link';
+    if (links.childNodes.length) links.append(' · ');
+    links.append(a);
+  };
+  const handle = (btn.dataset.instagram || '').replace(/^@/, '');
+  if (handle) add(`open @${handle}`, `https://instagram.com/${encodeURIComponent(handle)}`);
+  if (btn.dataset.email) add(`email ${btn.dataset.email}`, `mailto:${btn.dataset.email}`);
+  if (!links.childNodes.length) links.textContent = 'no Instagram or email on file for this store.';
+  document.getElementById('modal-channel').value = handle ? 'Instagram DM' : (btn.dataset.email ? 'Email' : 'Phone');
   modal.classList.add('show');
 }
 
@@ -172,163 +141,122 @@ function closePitchModal() {
   if (modal) modal.classList.remove('show');
 }
 
+async function copyPitch() {
+  const text = document.getElementById('modal-message').value;
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('Message copied', 'success');
+  } catch (e) {
+    showToast('Could not copy — select the text and copy it manually', 'error');
+  }
+}
+
 async function submitPitch(e) {
   e.preventDefault();
-  const storeName = document.getElementById('modal-store-input').value;
-  const channel = document.getElementById('modal-channel').value;
-  const message = document.getElementById('modal-message').value;
-
-  try {
-    const res = await fetch('/api/send-pitch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ store_name: storeName, channel, message })
-    });
-
-    const data = await res.json();
-    if (data.success) {
-      showToast(`✅ Pitch logged for ${storeName}`, 'success');
-      closePitchModal();
-    } else {
-      showToast(`❌ ${data.error}`, 'error');
-    }
-  } catch (e) {
-    showToast(`❌ Network error`, 'error');
+  const row = Number(document.getElementById('modal-row-input').value);
+  const name = document.getElementById('modal-store-input').value;
+  const data = await postJSON('/api/send-pitch', {
+    row,
+    store_name: name,
+    channel: document.getElementById('modal-channel').value,
+    message: document.getElementById('modal-message').value
+  });
+  if (data.success) {
+    showToast(`✅ ${data.message}`, 'success');
+    markPitched(row);
+    closePitchModal();
+  } else {
+    showToast(`❌ ${data.error}`, 'error');
   }
 }
 
-// ─── SCRAPER ───
-let scraperInterval = null;
-
-async function startScraper() {
-  const btn = document.getElementById('scraper-btn');
-  const terminal = document.getElementById('scraper-terminal');
-
+// ─── REVIEW (approve / reject a store) ───
+async function reviewStore(btn, decision) {
+  const store = storeOf(btn);
   btn.disabled = true;
-  btn.innerHTML = '<span class="progress-ring">⟳</span> Running...';
-  terminal.innerHTML = '';
-
-  appendTerminalLine('Godspeed Retail Intelligence Engine v2.0', 'sys');
-  appendTerminalLine('Initializing...', 'sys');
-
-  try {
-    const res = await fetch('/api/scraper/start', { method: 'POST' });
-    const data = await res.json();
-
-    if (!data.success) {
-      showToast(`❌ ${data.error}`, 'error');
-      btn.disabled = false;
-      btn.textContent = '▶ Run Scraper';
-      return;
-    }
-
-    // Poll for updates
-    scraperInterval = setInterval(pollScraperStatus, 1500);
-
-  } catch (e) {
-    showToast('❌ Failed to start scraper', 'error');
+  const data = await postJSON('/api/review', { row: store.row, store_name: store.name, decision });
+  if (!data.success) {
     btn.disabled = false;
-    btn.textContent = '▶ Run Scraper';
+    showToast(`❌ ${data.error}`, 'error');
+    return;
   }
+  showToast(decision === 'approve' ? `✅ ${store.name} added to qualified leads` : `${store.name} rejected`, 'success');
+  const tr = btn.closest('tr');
+  if (tr) tr.remove();
 }
 
-let lastProgressCount = 0;
+// ─── VERIFY JOB ───
+let jobTimer = null;
+let onJobDone = null;
 
-async function pollScraperStatus() {
+async function startJob(btn, name = 'verify') {
+  if (name === 'sync' && !confirm('Update the STORES tab from the leads file in this deploy?')) return;
+  if (btn) btn.disabled = true;
+  const data = await postJSON('/api/job/start', { job: name });
+  if (!data.success) {
+    if (btn) btn.disabled = false;
+    showToast(`❌ ${data.error}`, 'error');
+    return;
+  }
+  watchJob();
+}
+
+async function stopJob() {
+  await postJSON('/api/job/stop');
+  showToast('Stopping after the checks already in flight…');
+}
+
+function watchJob() {
+  const panel = document.getElementById('job-panel');
+  if (!panel || jobTimer) return;
+  panel.classList.add('show');
+  jobTimer = setInterval(pollJob, 1500);
+  pollJob();
+}
+
+async function pollJob() {
+  let data;
   try {
-    const res = await fetch('/api/scraper/status');
-    const data = await res.json();
-
-    // Add new lines
-    if (data.progress && data.progress.length > lastProgressCount) {
-      for (let i = lastProgressCount; i < data.progress.length; i++) {
-        appendTerminalLine(data.progress[i].message, 'output', data.progress[i].time);
-      }
-      lastProgressCount = data.progress.length;
-    }
-
-    if (!data.running && data.status !== 'idle') {
-      clearInterval(scraperInterval);
-      scraperInterval = null;
-      lastProgressCount = 0;
-
-      const btn = document.getElementById('scraper-btn');
-      btn.disabled = false;
-      btn.textContent = '▶ Run Scraper Again';
-
-      if (data.results) {
-        showResults(data.results);
-      }
-    }
-
+    data = await (await fetch('/api/job/status')).json();
   } catch (e) {
-    clearInterval(scraperInterval);
+    return;                       // transient — keep polling
+  }
+  document.getElementById('job-message').textContent = data.error ? `Failed: ${data.error}` : data.message;
+  const fill = document.getElementById('job-bar-fill');
+  fill.style.width = data.total ? `${Math.round((data.done / data.total) * 100)}%` : (data.running ? '8%' : '100%');
+  document.getElementById('job-stop').style.display = data.running && data.name === 'verify' ? '' : 'none';
+  if (!data.running) {
+    clearInterval(jobTimer);
+    jobTimer = null;
+    if (data.error) {
+      showToast(`❌ ${data.error}`, 'error');
+      document.querySelectorAll('button[onclick^="startJob"]').forEach(b => (b.disabled = false));
+    } else if (onJobDone) {
+      showToast(`✅ ${data.message}`, 'success');
+      setTimeout(onJobDone, 1200);
+    }
   }
 }
 
-function appendTerminalLine(msg, type = 'output', time = null) {
-  const terminal = document.getElementById('scraper-terminal');
-  if (!terminal) return;
-
-  const line = document.createElement('div');
-  line.className = 'terminal-line';
-
-  const timeStr = time || new Date().toLocaleTimeString('en-US', { hour12: false });
-  line.innerHTML = `<span class="terminal-time">[${timeStr}]</span><span class="terminal-msg">${msg}</span>`;
-
-  terminal.appendChild(line);
-  terminal.scrollTop = terminal.scrollHeight;
-}
-
-function showResults(results) {
-  const container = document.getElementById('results-container');
-  if (!container) return;
-
-  container.innerHTML = `
-    <div class="card-title" style="margin-top: 24px;"><span>📊</span> Results Summary</div>
-    <div class="results-grid">
-      <div class="result-card">
-        <div class="result-num">${results.stores_scanned}</div>
-        <div class="result-label">Stores Scanned</div>
-      </div>
-      <div class="result-card">
-        <div class="result-num" style="color: #2ECC71;">${results.new_leads}</div>
-        <div class="result-label">New Leads Found</div>
-      </div>
-      <div class="result-card">
-        <div class="result-num" style="color: #C9A84C;">${results.already_carrying}</div>
-        <div class="result-label">Already Carrying Godspeed</div>
-      </div>
-      <div class="result-card">
-        <div class="result-num" style="color: #8A9BB8;">${results.skipped}</div>
-        <div class="result-label">Skipped</div>
-      </div>
-    </div>
-  `;
-  showToast('✅ Scraper complete! Check leads page for new stores.', 'success');
+// ─── SCRAPER (queued — runs outside the dashboard) ───
+async function startScraper() {
+  const data = await postJSON('/api/scraper/start');
+  showToast(data.message || data.error || 'Scrape queued', data.success ? 'success' : 'error');
 }
 
 // ─── INIT ───
 document.addEventListener('DOMContentLoaded', () => {
   initBulkSelect();
 
-  // Highlight active nav link
-  const path = window.location.pathname;
-  document.querySelectorAll('.nav-link, .mobile-nav a').forEach(link => {
-    if (link.getAttribute('href') === path) {
-      link.classList.add('active');
-    }
-  });
-
-  // Pitch form
   const pitchForm = document.getElementById('pitch-form');
   if (pitchForm) pitchForm.addEventListener('submit', submitPitch);
 
-  // Close modal on overlay click
   const overlay = document.getElementById('pitch-modal');
   if (overlay) {
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) closePitchModal();
-    });
+    overlay.addEventListener('click', e => { if (e.target === overlay) closePitchModal(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closePitchModal(); });
   }
+
+  const panel = document.getElementById('job-panel');
+  if (panel && panel.dataset.running === 'true') watchJob();
 });

@@ -3,10 +3,16 @@ services:
     name: godspeed-dashboard
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    # One worker on purpose: the rebuild / verify jobs keep their progress in
+    # memory. Threads keep the pages responsive while a job runs.
+    startCommand: gunicorn app:app --workers 1 --threads 8 --timeout 120
+    healthCheckPath: /healthz
     plan: free
     envVars:
       - key: GOOGLE_TOKEN_JSON
         sync: false
       - key: GOOGLE_CREDENTIALS_JSON
+        sync: false
+      # Optional: set to require a password (any username) to open the dashboard.
+      - key: DASHBOARD_PASSWORD
         sync: false
