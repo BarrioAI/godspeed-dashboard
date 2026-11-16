@@ -24,6 +24,7 @@ Claude Code edits data/godspeed_leads_final.csv  ──commit, merge to main─�
         └── python ops.py sync ───────────────────────────────────────────▶  STORES updated
             python ops.py verify ─────────────────────────────────────────▶  VERIFICATION filled
             python ops.py export … ◀──────────────────────────────────────  live tabs as CSV
+            python refresh.py verification.csv ──▶ leads file corrected and re-ranked
 ```
 
 In Claude Code on the web, the session's environment must allow
@@ -38,6 +39,9 @@ In Claude Code on the web, the session's environment must allow
 - Do not delete rows to "clean". Chains, brand stores and non-stores are filtered by
   `quality.py` and shown under Rejected; fix the rule, not the row. Remove a row only
   when Goldie asks.
+- Contact details change only on evidence from the store's own website (`refresh.py` holds the
+  rules: own site, not a mall or directory page; phone in the store's state). A US phone whose
+  area code does not exist, or is from another state and not on the store's site, is cleared.
 - A store goes in with at least a name, a city and one way to reach it. Do not invent
   contact details: a blank is better than a guess. Verification fills blanks from the
   store's own website.
@@ -55,6 +59,20 @@ In Claude Code on the web, the session's environment must allow
 | "Check the Instagram / phone / website" | `/verify-leads` |
 | "Find stores in <market>" | `/add-leads <market>` |
 | "Push it live" | `/sync-leads` |
+| The weekly run (scheduled, or "refresh everything") | `/refresh-leads` |
+
+`/refresh-leads` is the standing job: verify → `refresh.py` → validate → merge → sync → report.
+It runs every week as a scheduled Claude Code task and may merge its own pull request when the
+validator and the tests pass. Everything else still waits for Goldie.
+
+## How a store is ranked
+
+`Lead Score` (0–100) = Contact 30 + Brand 25 + Market 25 + Reach 20 (`score_leads.py`).
+Brand is evidence, not a guess: `Brands Carried` lists the peer brands (`PEER_BRANDS` in
+`quality.py`) seen on the store's own website by verification, and 1 / 2 / 3+ of them earn
+10 / 18 / 25. A store that already sells Hellstar, Sp5der or Rhude and can be reached by Instagram
+and email is A-Tier; that is who Goldie should pitch first. Do not type brands into
+`Brands Carried` without a source (the store's site or stockist page).
 
 ## Develop
 

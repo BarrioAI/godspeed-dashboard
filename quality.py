@@ -135,6 +135,17 @@ JUNK_WORDS = [
     "plumbing", "roofing", "hvac", "hotel", "motel", "apartments", "gym",
     "fitness", "pawn", "cell phone repair", "furniture", "mattress",
     "hardware", "pet store", "veterinary", "daycare", "funeral",
+    # other businesses and page titles that search results drag in
+    "painting", "vending", "cannabis", "head shop", "meat", "appliances",
+    "trailer sales", "towboats", "detailing", "party supplies", "printing",
+    "sheds", "cheesy breads", "healthy kitchen", "health kitchen",
+    "food company", "business brokers", "gas station", "cadillac",
+    "car inventory", "townhomes", "new houses", "soccer club", "bookstore",
+    "bookstores", "bike shop", "home decor", "home design", "fine jewelry",
+    "dealer locator", "find a dealer", "dealer near you", "service centers",
+    "company profile", "filing information", "customer service",
+    "discount codes", "sitemap", "newsletter", "season passes", "stockists",
+    "find a stockist", "fixture store", "bundt cakes",
 ]
 
 # Evidence that this is the kind of door Godspeed sells into. Searched in
@@ -270,6 +281,64 @@ def normalize_instagram(raw) -> Optional[str]:
     return handle
 
 
+# US geographic area codes and the state each belongs to. Scraped rows often
+# carry made-up numbers: one whose area code does not exist, or belongs to
+# Canada or the Caribbean, is not a US store's phone, and one from the wrong
+# state is suspect until the store's own website confirms it (see refresh.py).
+AREA_CODE_STATE = dict(pair.split(":") for pair in """
+    201:NJ 202:DC 203:CT 205:AL 206:WA 207:ME 208:ID 209:CA 210:TX 212:NY 213:CA 214:TX
+    215:PA 216:OH 217:IL 218:MN 219:IN 220:OH 223:PA 224:IL 225:LA 227:MD 228:MS 229:GA
+    231:MI 234:OH 235:MO 239:FL 240:MD 248:MI 251:AL 252:NC 253:WA 254:TX 256:AL 260:IN
+    262:WI 267:PA 269:MI 270:KY 272:PA 274:WI 276:VA 279:CA 281:TX 283:OH 301:MD 302:DE
+    303:CO 304:WV 305:FL 307:WY 308:NE 309:IL 310:CA 312:IL 313:MI 314:MO 315:NY 316:KS
+    317:IN 318:LA 319:IA 320:MN 321:FL 323:CA 324:FL 325:TX 326:OH 327:AR 329:NY 330:OH
+    331:IL 332:NY 334:AL 336:NC 337:LA 339:MA 341:CA 346:TX 347:NY 350:CA 351:MA 352:FL
+    353:WI 360:WA 361:TX 363:NY 364:KY 369:CA 380:OH 385:UT 386:FL 401:RI 402:NE 404:GA
+    405:OK 406:MT 407:FL 408:CA 409:TX 410:MD 412:PA 413:MA 414:WI 415:CA 417:MO 419:OH
+    423:TN 424:CA 425:WA 430:TX 432:TX 434:VA 435:UT 440:OH 442:CA 443:MD 445:PA 447:IL
+    448:FL 458:OR 463:IN 464:IL 469:TX 470:GA 472:NC 475:CT 478:GA 479:AR 480:AZ 484:PA
+    501:AR 502:KY 503:OR 504:LA 505:NM 507:MN 508:MA 509:WA 510:CA 512:TX 513:OH 515:IA
+    516:NY 517:MI 518:NY 520:AZ 530:CA 531:NE 534:WI 539:OK 540:VA 541:OR 551:NJ 557:MO
+    559:CA 561:FL 562:CA 563:IA 564:WA 567:OH 570:PA 571:VA 572:OK 573:MO 574:IN 575:NM
+    580:OK 582:PA 585:NY 586:MI 601:MS 602:AZ 603:NH 605:SD 606:KY 607:NY 608:WI 609:NJ
+    610:PA 612:MN 614:OH 615:TN 616:MI 617:MA 618:IL 619:CA 620:KS 623:AZ 626:CA 628:CA
+    629:TN 630:IL 631:NY 636:MO 640:NJ 641:IA 645:FL 646:NY 650:CA 651:MN 656:FL 657:CA
+    659:AL 660:MO 661:CA 662:MS 667:MD 669:CA 678:GA 680:NY 681:WV 682:TX 686:VA 689:FL
+    701:ND 702:NV 703:VA 704:NC 706:GA 707:CA 708:IL 712:IA 713:TX 714:CA 715:WI 716:NY
+    717:PA 718:NY 719:CO 720:CO 724:PA 725:NV 726:TX 727:FL 728:FL 730:IL 731:TN 732:NJ
+    734:MI 737:TX 738:CA 740:OH 743:NC 747:CA 748:CO 754:FL 757:VA 760:CA 762:GA 763:MN
+    765:IN 769:MS 770:GA 771:DC 772:FL 773:IL 774:MA 775:NV 779:IL 781:MA 785:KS 786:FL
+    801:UT 802:VT 803:SC 804:VA 805:CA 806:TX 808:HI 810:MI 812:IN 813:FL 814:PA 815:IL
+    816:MO 817:TX 818:CA 820:CA 821:SC 826:VA 828:NC 830:TX 831:CA 832:TX 835:PA 838:NY
+    839:SC 840:CA 843:SC 845:NY 847:IL 848:NJ 850:FL 854:SC 856:NJ 857:MA 858:CA 859:KY
+    860:CT 862:NJ 863:FL 864:SC 865:TN 870:AR 872:IL 878:PA 901:TN 903:TX 904:FL 906:MI
+    907:AK 908:NJ 909:CA 910:NC 912:GA 913:KS 914:NY 915:TX 916:CA 917:NY 918:OK 919:NC
+    920:WI 925:CA 928:AZ 929:NY 930:IN 931:TN 934:NY 936:TX 937:OH 938:AL 940:TX 941:FL
+    943:GA 945:TX 947:MI 948:VA 949:CA 951:CA 952:MN 954:FL 956:TX 959:CT 970:CO 971:OR
+    972:TX 973:NJ 975:MO 978:MA 979:TX 980:NC 983:CO 984:NC 985:LA 986:ID 989:MI
+""".split())
+TOLL_FREE_CODES = frozenset({"800", "833", "844", "855", "866", "877", "888"})
+US_AREA_CODES = frozenset(AREA_CODE_STATE) | TOLL_FREE_CODES
+
+# Brands whose presence on a store's own site says "this door sells what
+# Godspeed sells". Generic words (Essentials, Palace, Jordan) are left out, and
+# "Supreme" only counts next to another of these (see peer_brands).
+PEER_BRANDS = [
+    "Hellstar", "Rhude", "Vale Forever", "Denim Tears", "Sp5der", "Gallery Dept",
+    "Fear of God", "Off-White", "BAPE", "Amiri", "Chrome Hearts", "Stussy", "Kith",
+    "Supreme",
+]
+_PEER_BY_KEY = {re.sub(r"[^a-z0-9]", "", b.lower()): b for b in PEER_BRANDS}
+
+
+def peer_brands(names: Iterable[str]) -> list[str]:
+    """The peer brands among `names`, in PEER_BRANDS order. Supreme alone does not count."""
+    found = {_PEER_BY_KEY.get(re.sub(r"[^a-z0-9]", "", s(n).lower())) for n in names} - {None}
+    if found == {"Supreme"}:
+        return []
+    return [b for b in PEER_BRANDS if b in found]
+
+
 def normalize_phone(raw) -> Optional[str]:
     """Any US formatting -> 10 digits. None if it is not a dialable US number."""
     text = s(raw)
@@ -284,6 +353,8 @@ def normalize_phone(raw) -> Optional[str]:
     if digits[0] in "01" or digits[3] in "01":      # invalid area code / exchange
         return None
     if len(set(digits)) == 1 or digits[3:6] == "555":
+        return None
+    if digits[:3] not in US_AREA_CODES:
         return None
     return digits
 
@@ -534,6 +605,10 @@ CHAIN_DOMAINS = {
     "academy.com", "kohls.com", "jcpenney.com", "tjmaxx.tjx.com", "tjmaxx.com",
     "marshalls.com", "burlington.com", "rossstores.com", "kith.com", "goat.com",
     "stockx.com", "simon.com", "villa.com", "ruvilla.com", "expressurbanwear.com",
+    "rh.com", "verabradley.com", "bootbarn.com", "popshelf.com", "gamestop.com",
+    "fleetfeet.com", "fit2run.com", "modells.com", "shopwss.com", "overland.com",
+    "harborfreight.com", "7-eleven.com", "starbucks.com", "nothingbundtcakes.com",
+    "budgetblinds.com", "onepeloton.com", "trekbikes.com",
 }
 
 BRAND_DOMAINS = {
@@ -550,6 +625,9 @@ BRAND_DOMAINS = {
     "tommy.com", "calvinklein.us", "lacoste.com", "truereligion.com",
     "patagonia.com", "thenorthface.com", "columbia.com", "octobersveryown.com",
     "representclo.com", "ericemanuel.com", "godspeednewyork.com",
+    "rhone.com", "jamesperse.com", "jacquemus.com", "rickowens.eu",
+    "goldengoose.com", "valentino.com", "buckmason.com", "mizzenandmain.com",
+    "lafayette148ny.com", "roddandgunn.com",
 }
 
 # Media, marketplaces, directories, maps, social: a row pointing here is a
@@ -571,6 +649,29 @@ NOT_STORE_DOMAINS = {
     "scribd.com", "glassdoor.com", "indeed.com", "ziprecruiter.com",
     "cylex.us.com", "cylex-usa.com", "storefound.org", "mallscenters.com",
     "outletbound.com", "shopping-canada.com", "placer.ai",
+    # delivery, listings, business data, stock photos, jobs
+    "leafly.com", "weedmaps.com", "postmates.com", "doordash.com", "ubereats.com",
+    "trustpilot.com", "dnb.com", "homeadvisor.com", "zillow.com", "realtor.com",
+    "homes.com", "bizprofile.net", "rocketreach.co", "procore.com",
+    "gettyimages.com", "alamy.com", "cbre.com", "joincheckmate.com", "shop.app",
+    "locally.com", "store2be.com", "hypemaps.com", "attic.city", "mindtrip.ai",
+    "encyclopedia.com", "fanac.org", "idahogeology.org",
+    # media and guides
+    "yahoo.com", "elle.com", "adweek.com", "substack.com", "lemon8-app.com",
+    "metrotimes.com", "tulsapeople.com", "405magazine.com", "bocamag.com",
+    "insidehook.com", "secretmiami.com", "thescoutguide.com", "unation.com",
+    "thespaces.com", "trippin.world", "fashionsauce.com", "backwardfashion.com",
+    "culturehoney.com", "newyorksocialdiary.com", "littlerocksoiree.com",
+    "greaterseattleonthecheap.com", "luxiere.co", "nbktimes.com",
+    "theghettoflower.com", "thelocalartisanguide.com", "atriummag.org",
+    # online-only retailers and resale sites
+    "mrporter.com", "endclothing.com", "giglio.com",
+    # companies that are not clothing retailers
+    "garmin.com", "suunto.com", "rivian.com", "valero.com", "valley.com",
+    "ecolab.com", "shimano.com", "thalesgroup.com", "masonite.com",
+    "baxterhealthcare.com.au", "carrier.com", "volvoce.com", "vcahospitals.com",
+    "vale.com", "valetliving.com", "sixflags.com", "valehealthykitchen.com",
+    "valepainting.com", "cadex-cycling.com", "fabricut.com",
 }
 
 GENERIC_PAGE_TITLES = {
@@ -604,7 +705,7 @@ _BRAND_SQUAT_RE = re.compile(
     r"hellstar|sp5der|spider-?hoodie|rhude|valeforever|denimtears|gallerydept|"
     r"chromehearts|essentialshoodie|corteiz|bapehoodie|trapstar|syna-?world")
 _PLACE_RE = re.compile(
-    r"(?<![a-z])(?:mall|shopping center|shopping centre|outlets|town center|"
+    r"(?<![a-z])(?:mall|shops at|shopping center|shopping centre|outlets|town center|"
     r"tourism|chamber of commerce|visitors bureau|farmers market|flea market)(?![a-z])")
 _CAPTION_RE = re.compile(r"(?i)\bdm (?:me|us)\b|!!!|#\w+.*#\w+|\blink in bio\b")
 
@@ -625,7 +726,9 @@ def website_flags(row: dict) -> list[tuple[str, str]]:
         out.append(("not-a-store", "website is an Instagram post, not a store"))
         return out
     domain = website_domain(raw)
-    if _domain_in(domain, CHAIN_DOMAINS):
+    if domain and domain.endswith(".gov"):
+        out.append(("not-a-store", f"government website: {domain}"))
+    elif _domain_in(domain, CHAIN_DOMAINS):
         out.append(("chain", f"chain website: {domain}"))
     elif _domain_in(domain, BRAND_DOMAINS):
         out.append(("mono-brand", f"brand's own website: {domain}"))

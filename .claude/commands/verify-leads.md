@@ -8,9 +8,10 @@ Run the live contact check on the deployed dashboard and act on the results.
    re-run at any time and survives the server restarting. `--recheck` checks everything again.
    If it reports a network problem, that batch was not saved; try again later.
 2. `python ops.py export verification -o /tmp/verification.csv` and read it.
-3. For rows with `suggested_fixes` (the website disagrees with the sheet) or `found_*` values
-   (the website has a detail the sheet lacks): open the store's site if there is any doubt, then
-   put the correct value in `data/godspeed_leads_final.csv`. Use only what the store's own site shows.
+3. `python refresh.py /tmp/verification.csv --dry-run`, read what it would change, then run it
+   without `--dry-run`. It applies what a store's own website proves and lists the rest under
+   `needs_a_look`. Settle those by hand only from the evidence; use only what the store's own
+   site shows.
 4. Rows whose website is `unreachable`: check whether the URL is a typo before clearing it.
 5. Validate, test, summarise the corrections for Goldie, commit, then `/sync-leads`.
 
